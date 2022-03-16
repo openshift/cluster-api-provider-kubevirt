@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -76,36 +76,21 @@ var _ = Describe("CreateCluster", func() {
 					Name: namespace,
 				},
 			}
-			_ = k8sclient.Delete(context.Background(), ns)
-			_ = os.RemoveAll(tmpDir)
+
+			tests.DeleteAndWait(k8sclient, ns, 120)
+
 		}()
 
-		// Typically the machine deployment and machines should not need to get removed before
-		// the Cluster object. However we have a bug today that prevents proper tear down
-		// of the cluster unless the machines are removed first.
-		//
-		// Tracking this issue here: https://github.com/kubernetes-sigs/cluster-api-provider-kubevirt/issues/65
-		// TODO remove the logic that delets the machine and kubevirt machines once this issue is resolved.
-		By("removing machine deployment")
-		machineDeployment := &clusterv1.MachineDeployment{}
-		key := client.ObjectKey{Namespace: namespace, Name: "kvcluster-md-0"}
-		tests.DeleteAndWait(k8sclient, machineDeployment, key, 120)
-
-		By("removing all kubevirt machines")
-		machineList := &infrav1.KubevirtMachineList{}
-		err := k8sclient.List(context.Background(), machineList, client.InNamespace(namespace))
-		Expect(err).ToNot(HaveOccurred())
-
-		for _, machine := range machineList.Items {
-			key := client.ObjectKey{Namespace: namespace, Name: machine.Name}
-			tests.DeleteAndWait(k8sclient, &machine, key, 120)
-		}
+		_ = os.RemoveAll(tmpDir)
 
 		By("removing cluster")
-		cluster := &clusterv1.Cluster{}
-		key = client.ObjectKey{Namespace: namespace, Name: "kvcluster"}
-		tests.DeleteAndWait(k8sclient, cluster, key, 120)
-
+		cluster := &clusterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+				Name:      "kvcluster",
+			},
+		}
+		tests.DeleteAndWait(k8sclient, cluster, 120)
 	})
 
 	waitForBootstrappedMachines := func() {
@@ -306,7 +291,7 @@ var _ = Describe("CreateCluster", func() {
 		return newString
 	}
 
-	It("creating a simple cluster with ephemeral VMs", func() {
+	It("creating a simple cluster with ephemeral VMs", Label("ephemeralVMs"), func() {
 		By("generating cluster manifests from example template")
 		cmd := exec.Command(tests.ClusterctlPath, "generate", "cluster", "kvcluster", "--target-namespace", namespace, "--kubernetes-version", "v1.21.0", "--control-plane-machine-count=1", "--worker-machine-count=1", "--from", "templates/cluster-template.yaml")
 		cmd.Env = append(os.Environ(),
@@ -332,7 +317,7 @@ var _ = Describe("CreateCluster", func() {
 		waitForMachineReadiness(2, 0)
 	})
 
-	It("creating a simple externally managed cluster ephemeral VMs", func() {
+	It("creating a simple externally managed cluster ephemeral VMs", Label("ephemeralVMs", "externallyManaged"), func() {
 		By("generating cluster manifests from example template")
 		cmd := exec.Command(tests.ClusterctlPath, "generate", "cluster", "kvcluster", "--target-namespace", namespace, "--kubernetes-version", "v1.21.0", "--control-plane-machine-count=1", "--worker-machine-count=1", "--from", "templates/cluster-template.yaml")
 		cmd.Env = append(os.Environ(),
@@ -362,9 +347,18 @@ var _ = Describe("CreateCluster", func() {
 
 		By("Waiting for all tenant nodes to get provider id")
 		waitForNodeUpdate()
+
+		By("Ensuring cluster teardown works without race conditions by deleting namespace")
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: namespace,
+			},
+		}
+		tests.DeleteAndWait(k8sclient, ns, 120)
+
 	})
 
-	It("creating a simple cluster with persistent VMs", func() {
+	It("creating a simple cluster with persistent VMs", Label("persistentVMs"), func() {
 		By("generating cluster manifests from example template")
 		cmd := exec.Command(tests.ClusterctlPath, "generate", "cluster", "kvcluster", "--target-namespace", namespace, "--kubernetes-version", "v1.21.0", "--control-plane-machine-count=1", "--worker-machine-count=1", "--from", "templates/cluster-template-persistent-storage.yaml")
 		cmd.Env = append(os.Environ(),

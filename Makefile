@@ -15,7 +15,7 @@
 # If you update this file, please follow:
 # https://suva.sh/posts/well-documented-makefiles/
 
-ROOT = $$GOPATH/pkg/mod/sigs.k8s.io/cluster-api@v0.3.11-0.20210525210043-6c7878e7b4a9
+ROOT = $$(go env GOPATH)/pkg/mod/sigs.k8s.io/cluster-api@v0.3.11-0.20210525210043-6c7878e7b4a9
 
 .DEFAULT_GOAL:=help
 TARGET ?= target
@@ -50,13 +50,11 @@ endif
 CONTROLLER_GEN := $(abspath $(TOOLS_BIN_DIR)/controller-gen)
 CONVERSION_GEN := $(abspath $(TOOLS_BIN_DIR)/conversion-gen)
 GOTESTSUM := $(abspath $(TOOLS_BIN_DIR)/gotestsum)
-KUSTOMIZE := $(abspath $(TOOLS_BIN_DIR)/kustomize)
-
-$(KUSTOMIZE): # Build kustomize from tools folder.
-	$(MAKE) -C $(ROOT) kustomize
+KUSTOMIZE_IMAGE = k8s.gcr.io/kustomize/kustomize:v3.8.7
+KUSTOMIZE ?= docker run $(KUSTOMIZE_IMAGE)
 
 # Define Docker related variables. Releases should modify and double check these vars.
-REGISTRY ?= localhost:5000
+REGISTRY ?= 127.0.0.1:5000
 IMAGE_NAME ?= capk-manager
 CONTROLLER_IMG ?= $(REGISTRY)/$(IMAGE_NAME)
 ARCH ?= amd64
@@ -187,7 +185,7 @@ modules: ## Runs go mod to ensure modules are up to date.
 .PHONY: docker-pull-prerequisites
 docker-pull-prerequisites:
 	docker pull docker.io/docker/dockerfile:1.1-experimental
-	docker pull docker.io/library/golang:1.17.2
+	docker pull docker.io/library/golang:1.18.2
 	docker pull gcr.io/distroless/static:latest
 
 .PHONY: docker-build
@@ -243,6 +241,18 @@ ifeq ($(shell uname -s), Darwin)
 else
 	sed -i -e 's@imagePullPolicy: .*@imagePullPolicy: '"$(PULL_POLICY)"'@' ./config/default/manager_pull_policy.yaml
 endif
+
+## --------------------------------------
+## Deployment
+## --------------------------------------
+##> infrastructure-components.yaml
+set_controller_image:
+	echo setting controller image to be ${CONTROLLER_IMG}:${TAG}
+	cd config/default && kustomize edit set image controller=${CONTROLLER_IMG}:${TAG} 
+
+create-infrastructure-components: generate-manifests set_controller_image
+	kustomize build config/default > infrastructure-components.yaml
+
 
 ## --------------------------------------
 ## Cleanup / Verification

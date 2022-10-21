@@ -18,6 +18,7 @@ set -e
 
 UPSTREAM_REMOTE="auto-sync-script-upstream"
 OPENSHIFT_REMOTE="auto-sync-script-openshift-fork"
+FORK_REMOTE=${FORK_REMOTE:-origin}
 
 UPSTREAM_BRANCH="${UPSTREAM_REMOTE}/main"
 OPENSHIFT_BRANCH="${OPENSHIFT_REMOTE}/main"
@@ -87,7 +88,7 @@ git -c core.editor=true merge --continue
 
 verify_merge
 
-git push origin $NEW_BRANCH_NAME
+git push ${FORK_REMOTE} $NEW_BRANCH_NAME
 
 # the gh CLI does not support choosing the remote repository from command line. Setting the default one
 sed -i "/gh-resolved = base/d" .git/config

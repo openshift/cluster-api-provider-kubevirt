@@ -5,7 +5,6 @@ ARG goproxy=https://proxy.golang.org
 ENV GOPROXY=$goproxy
 ENV GOFLAGS="-mod=readonly"
 
-FROM toolchain as builder
 WORKDIR /workspace
 
 # Copy the sources
@@ -17,7 +16,6 @@ ARG package=.
 ARG ARCH
 ARG LDFLAGS
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags "${LDFLAGS} -extldflags '-static'"  -o manager ${package}
-ENTRYPOINT [ "/start.sh", "/workspace/manager" ]
 
 # Copy the controller-manager into a thin image
 FROM registry.redhat.io/rhel9-4-els/rhel:9.4

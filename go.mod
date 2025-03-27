@@ -88,10 +88,10 @@ require (
 	golang.org/x/exp v0.0.0-20220722155223-a9213eeb770e // indirect
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/term v0.29.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
@@ -110,6 +110,6 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 )
 
-replace golang.org/x/crypto => golang.org/x/crypto v0.32.0
+replace golang.org/x/crypto => github.com/openshift/golang-crypto v0.33.1-0.20250310193910-9003f682e581
 
 replace golang.org/x/net => golang.org/x/net v0.34.0

@@ -388,7 +388,8 @@ spec:
     - name: workspace
     - name: git-auth
       optional: true
-  taskRunTemplate: {}
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-cluster-api-provider-kubevirt-mce-25
   workspaces:
   - name: workspace
     volumeClaimTemplate:

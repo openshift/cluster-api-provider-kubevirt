@@ -15,6 +15,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gotest.tools/gotestsum v1.6.4
 	k8s.io/code-generator v0.21.0-beta.0
-	k8s.io/utils v0.0.0-20210305010621-2afb4311ab10 // indirect
+	k8s.io/utils 0f33e8f1c979 // indirect
 	sigs.k8s.io/controller-tools v0.5.0
 )

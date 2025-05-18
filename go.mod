@@ -86,7 +86,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8 // indirect
-	golang.org/x/net v0.34.0 // indirect
+	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/oauth2 v0.25.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
@@ -112,4 +112,4 @@ require (
 replace golang.org/x/crypto => golang.org/x/crypto v0.32.0
 
 // fix CVE-2024-45338
-replace golang.org/x/net => golang.org/x/net v0.34.0
+replace golang.org/x/net => golang.org/x/net v0.40.0

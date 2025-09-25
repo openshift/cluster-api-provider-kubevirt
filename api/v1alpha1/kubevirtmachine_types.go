@@ -28,6 +28,10 @@ const (
 	// MachineFinalizer allows ReconcileKubevirtMachine to clean up resources associated with machine before
 	// removing it from the apiserver.
 	MachineFinalizer = "kubevirtmachine.infrastructure.cluster.x-k8s.io"
+
+	// AllocatedIPsAnnotationPrefix is the prefix for annotations storing allocated IPs per network
+	// The full annotation key will be: AllocatedIPsAnnotationPrefix + networkName
+	AllocatedIPsAnnotationPrefix = "infrastructure.cluster.x-k8s.io/allocated-ips-"
 )
 
 // VirtualMachineTemplateSpec defines the desired state of the kubevirt VM.
@@ -55,6 +59,8 @@ type KubevirtMachineSpec struct {
 	// When nil, this defaults to the value present in the KubevirtCluster object's spec associated with this machine.
 	// +optional
 	InfraClusterSecretRef *corev1.ObjectReference `json:"infraClusterSecretRef,omitempty"`
+
+	BootstrapNetworkConfig *VirtualMachineBootstrapNetworkConfig `json:"bootstrapNetworkConfig,omitempty"`
 }
 
 // VirtualMachineBootstrapCheckSpec defines how the controller will remotely check CAPI Sentinel file content.
@@ -66,6 +72,20 @@ type VirtualMachineBootstrapCheckSpec struct {
 	// +kubebuilder:validation:Enum=none;ssh
 	// +kubebuilder:default:=ssh
 	CheckStrategy string `json:"checkStrategy,omitempty"`
+}
+
+type VirtualMachineBootstrapNetworkConfig struct {
+	// +optional
+	// +kubebuilder:default=enp1s0
+	Interface string `json:"interface,omitempty"`
+	// +required
+	NetworkName string `json:"networkName"`
+	// +required
+	Addresses []string `json:"addresses"`
+	// +required
+	Nameservers []string `json:"nameservers"`
+	// +required
+	Gateway []string `json:"gateway"`
 }
 
 // KubevirtMachineStatus defines the observed state of KubevirtMachine.

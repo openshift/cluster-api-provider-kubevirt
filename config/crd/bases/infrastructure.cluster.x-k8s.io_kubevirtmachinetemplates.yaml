@@ -51,6 +51,31 @@ spec:
                     description: Spec is the specification of the desired behavior
                       of the machine.
                     properties:
+                      bootstrapNetworkConfig:
+                        properties:
+                          addresses:
+                            items:
+                              type: string
+                            type: array
+                          gateway:
+                            items:
+                              type: string
+                            type: array
+                          interface:
+                            default: enp1s0
+                            type: string
+                          nameservers:
+                            items:
+                              type: string
+                            type: array
+                          networkName:
+                            type: string
+                        required:
+                        - addresses
+                        - gateway
+                        - nameservers
+                        - networkName
+                        type: object
                       infraClusterSecretRef:
                         description: |-
                           InfraClusterSecretRef is a reference to a secret with a kubeconfig for external cluster used for infra.

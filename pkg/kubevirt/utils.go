@@ -18,6 +18,7 @@ package kubevirt
 
 import (
 	"fmt"
+	"net"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,7 +70,12 @@ func prefixDataVolumeTemplates(vm *kubevirtv1.VirtualMachine, prefix string) *ku
 
 // newVirtualMachineFromKubevirtMachine creates VirtualMachine instance.
 func newVirtualMachineFromKubevirtMachine(ctx *context.MachineContext, namespace string) *kubevirtv1.VirtualMachine {
-	vmiTemplate := buildVirtualMachineInstanceTemplate(ctx)
+	return newVirtualMachineFromKubevirtMachineWithIPs(ctx, namespace, nil)
+}
+
+// newVirtualMachineFromKubevirtMachineWithIPs creates VirtualMachine instance with allocated IPs.
+func newVirtualMachineFromKubevirtMachineWithIPs(ctx *context.MachineContext, namespace string, allocatedIPs []*net.IPNet) *kubevirtv1.VirtualMachine {
+	vmiTemplate := buildVirtualMachineInstanceTemplateWithIPs(ctx, allocatedIPs)
 
 	virtualMachine := &kubevirtv1.VirtualMachine{
 		Spec: *ctx.KubevirtMachine.Spec.VirtualMachineTemplate.Spec.DeepCopy(),
@@ -116,6 +122,11 @@ func mapCopy(src map[string]string) map[string]string {
 
 // buildVirtualMachineInstanceTemplate creates VirtualMachineInstanceTemplateSpec.
 func buildVirtualMachineInstanceTemplate(ctx *context.MachineContext) *kubevirtv1.VirtualMachineInstanceTemplateSpec {
+	return buildVirtualMachineInstanceTemplateWithIPs(ctx, nil)
+}
+
+// buildVirtualMachineInstanceTemplateWithIPs creates VirtualMachineInstanceTemplateSpec with allocated IPs.
+func buildVirtualMachineInstanceTemplateWithIPs(ctx *context.MachineContext, allocatedIPs []*net.IPNet) *kubevirtv1.VirtualMachineInstanceTemplateSpec {
 	template := &kubevirtv1.VirtualMachineInstanceTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:      map[string]string{},
@@ -149,6 +160,19 @@ func buildVirtualMachineInstanceTemplate(ctx *context.MachineContext) *kubevirtv
 			},
 		},
 	}
+
+	// Add network data if BootstrapNetworkConfig is specified
+	if ctx.KubevirtMachine.Spec.BootstrapNetworkConfig != nil {
+		// Generate cloud-init network data v2 if we have allocated IPs or configuration
+		if len(allocatedIPs) > 0 || len(ctx.KubevirtMachine.Spec.BootstrapNetworkConfig.Addresses) > 0 {
+			networkDataYAML, err := GenerateCloudInitNetworkDataV2YAML(ctx.KubevirtMachine.Spec.BootstrapNetworkConfig, allocatedIPs)
+			if err == nil {
+				// Set network data inline
+				cloudInitVolume.VolumeSource.CloudInitConfigDrive.NetworkData = networkDataYAML
+			}
+		}
+	}
+
 	template.Spec.Volumes = append(template.Spec.Volumes, cloudInitVolume)
 
 	cloudInitDisk := kubevirtv1.Disk{

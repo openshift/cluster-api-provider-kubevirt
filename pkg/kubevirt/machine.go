@@ -19,6 +19,7 @@ package kubevirt
 import (
 	gocontext "context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/pkg/errors"
@@ -52,6 +53,7 @@ type Machine struct {
 	vmiInstance    *kubevirtv1.VirtualMachineInstance
 	vmInstance     *kubevirtv1.VirtualMachine
 	dataVolumes    []*cdiv1.DataVolume
+	allocatedIPs   []*net.IPNet
 
 	sshKeys            *ssh.ClusterNodeSshKeys
 	getCommandExecutor func(string, *ssh.ClusterNodeSshKeys) ssh.VMCommandExecutor
@@ -59,6 +61,11 @@ type Machine struct {
 
 // NewMachine returns a new Machine service for the given context.
 func NewMachine(ctx *context.MachineContext, client client.Client, namespace string, sshKeys *ssh.ClusterNodeSshKeys) (*Machine, error) {
+	return NewMachineWithIPs(ctx, client, namespace, sshKeys, nil)
+}
+
+// NewMachineWithIPs returns a new Machine service for the given context with allocated IPs.
+func NewMachineWithIPs(ctx *context.MachineContext, client client.Client, namespace string, sshKeys *ssh.ClusterNodeSshKeys, allocatedIPs []*net.IPNet) (*Machine, error) {
 	machine := &Machine{
 		client:             client,
 		namespace:          namespace,
@@ -67,6 +74,7 @@ func NewMachine(ctx *context.MachineContext, client client.Client, namespace str
 		vmInstance:         nil,
 		sshKeys:            sshKeys,
 		dataVolumes:        nil,
+		allocatedIPs:       allocatedIPs,
 		getCommandExecutor: ssh.NewVMCommandExecutor,
 	}
 
@@ -181,7 +189,7 @@ func (m *Machine) Exists() bool {
 func (m *Machine) Create(ctx gocontext.Context) error {
 	m.machineContext.Logger.Info(fmt.Sprintf("Creating VM with role '%s'...", nodeRole(m.machineContext)))
 
-	virtualMachine := newVirtualMachineFromKubevirtMachine(m.machineContext, m.namespace)
+	virtualMachine := newVirtualMachineFromKubevirtMachineWithIPs(m.machineContext, m.namespace, m.allocatedIPs)
 
 	mutateFn := func() (err error) {
 		if virtualMachine.Labels == nil {

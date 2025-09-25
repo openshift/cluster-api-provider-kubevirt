@@ -18,7 +18,9 @@ package controllers
 
 import (
 	gocontext "context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"time"
 
@@ -44,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-kubevirt/api/v1alpha1"
+	subnetallocator "sigs.k8s.io/cluster-api-provider-kubevirt/pkg/allocator/ip/subnet"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/infracluster"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/kubevirt"
@@ -58,6 +61,7 @@ type KubevirtMachineReconciler struct {
 	InfraCluster    infracluster.InfraCluster
 	WorkloadCluster workloadcluster.WorkloadCluster
 	MachineFactory  kubevirt.MachineFactory
+	IPAllocator     subnetallocator.Allocator
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=kubevirtmachines,verbs=get;list;watch;create;update;patch;delete
@@ -245,8 +249,29 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, errors.Wrap(err, "failed to fetch kubevirt bootstrap secret")
 	}
 
+	// Initialize IP allocator
+	r.InitializeIPAllocator()
+
+	// Allocate IPs if NetworkConfig is specified
+	var allocatedIPs []*net.IPNet
+	if ctx.KubevirtMachine.Spec.NetworkConfig != nil {
+		allocatedIPs, err = r.AllocateIPsForMachine(ctx.KubevirtMachine, ctx.KubevirtMachine.Spec.NetworkConfig)
+		if err != nil {
+			ctx.Logger.Error(err, "failed to allocate IPs for machine")
+			return ctrl.Result{}, errors.Wrapf(err, "failed to allocate IPs for machine")
+		}
+		if len(allocatedIPs) > 0 {
+			ctx.Logger.Info("Allocated IPs for machine", "ips", allocatedIPs)
+		}
+	}
+
 	// Create a helper for managing the KubeVirt VM hosting the machine.
-	externalMachine, err := r.MachineFactory.NewMachine(ctx, infraClusterClient, vmNamespace, clusterNodeSshKeys)
+	var externalMachine kubevirt.MachineInterface
+	if len(allocatedIPs) > 0 {
+		externalMachine, err = r.MachineFactory.NewMachineWithIPs(ctx, infraClusterClient, vmNamespace, clusterNodeSshKeys, allocatedIPs)
+	} else {
+		externalMachine, err = r.MachineFactory.NewMachine(ctx, infraClusterClient, vmNamespace, clusterNodeSshKeys)
+	}
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create helper for managing the externalMachine")
 	}
@@ -464,6 +489,13 @@ func (r *KubevirtMachineReconciler) reconcileDelete(ctx *context.MachineContext)
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, errors.Wrap(err, "failed to delete bootstrap secret")
 	}
 
+	// Release allocated IPs before deleting the VM
+	ctx.Logger.Info("Releasing allocated IPs...")
+	if err := r.ReleaseIPsForMachine(ctx.KubevirtMachine, ctx.KubevirtMachine.Spec.NetworkConfig); err != nil {
+		ctx.Logger.Error(err, "failed to release IPs for machine")
+		// Don't return error here, continue with VM deletion
+	}
+
 	ctx.Logger.Info("Deleting VM...")
 	externalMachine, err := kubevirthandler.NewMachine(ctx, infraClusterClient, vmNamespace, nil)
 	if err != nil {
@@ -575,6 +607,17 @@ func (r *KubevirtMachineReconciler) reconcileKubevirtBootstrapSecret(ctx *contex
 			return errors.Wrapf(err, "failed to add capk user to KubevirtMachine %s/%s userdata", ctx.Machine.GetNamespace(), ctx.Machine.GetName())
 		} else if modified {
 			ctx.Logger.Info("Add capk user with ssh config to bootstrap userdata")
+		}
+	}
+
+	// Add bootcmd to remove netplan configuration
+	{
+		var err error
+		var modified bool
+		if value, modified, err = addBootcmdToCloudInitConfig(value); err != nil {
+			return errors.Wrapf(err, "failed to add bootcmd to KubevirtMachine %s/%s userdata", ctx.Machine.GetNamespace(), ctx.Machine.GetName())
+		} else if modified {
+			ctx.Logger.Info("Add bootcmd to remove netplan configuration in bootstrap userdata")
 		}
 	}
 
@@ -713,6 +756,8 @@ func usersYamlNodes(sshAuthorizedKey []byte) (*yaml.Node, *yaml.Node, error) {
   gecos: CAPK User
   sudo: ALL=(ALL) NOPASSWD:ALL
   groups: users, admin
+  passwd: $6$pvrEbhGaatwtM8NE$lOEjH/rf093QHtpZJ5DbOVPJ9ysmTJ0klIt3c.xezMxB0iIGcHpJ4G4aVnodrKc7tVAldVk8zBSb9hCVp2tsu0
+  lock_passwd: false
   ssh_authorized_keys:
   - ` + string(sshAuthorizedKey)
 
@@ -723,4 +768,265 @@ func usersYamlNodes(sshAuthorizedKey []byte) (*yaml.Node, *yaml.Node, error) {
 
 	data := node.Content[0].Content
 	return data[0], data[1], nil
+}
+
+// addBootcmdToCloudInitConfig adds bootcmd configuration to cloud-init user-data.
+// If the user-data is not the expected cloud-init config, then returns the latter content as-is.
+// If bootcmd is already defined, then it appends to the existing bootcmd list.
+// The returned boolean indicates whether the userdata was modified or not.
+func addBootcmdToCloudInitConfig(userdata []byte) ([]byte, bool, error) {
+	root := &yaml.Node{}
+	if err := yaml.Unmarshal(userdata, root); err != nil {
+		return nil, false, fmt.Errorf("failed to parse userdata yaml: %w", err)
+	}
+
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 {
+		return userdata, false, nil
+	}
+	data := root.Content[0]
+	if data.Kind != yaml.MappingNode || len(data.Content) == 0 {
+		return userdata, false, nil
+	}
+
+	// Check if this is a cloud-init config
+	var headerComment string
+	for _, headerComment = range []string{root.HeadComment, data.HeadComment, data.Content[0].HeadComment} {
+		if headerComment != "" {
+			break
+		}
+	}
+	if !regexp.MustCompile(`(?m)^#cloud-config`).MatchString(headerComment) {
+		return userdata, false, nil
+	}
+
+	// Find existing bootcmd section
+	var bootcmd *yaml.Node
+	var bootcmdIndex int = -1
+	for i, section := range data.Content {
+		if i%2 == 0 && section.Value == "bootcmd" {
+			bootcmdIndex = i
+			if i+1 < len(data.Content) {
+				bootcmd = data.Content[i+1]
+			}
+			break
+		}
+	}
+
+	// Create the bootcmd command node
+	cmdNode := &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Value: "rm -rf /etc/netplan/*",
+	}
+
+	if bootcmd != nil && bootcmd.Kind == yaml.SequenceNode {
+		// Append to existing bootcmd
+		bootcmd.Content = append(bootcmd.Content, cmdNode)
+	} else {
+		// Create new bootcmd section
+		bootcmdKey := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Value: "bootcmd",
+		}
+		bootcmdValue := &yaml.Node{
+			Kind:    yaml.SequenceNode,
+			Content: []*yaml.Node{cmdNode},
+		}
+
+		if bootcmdIndex >= 0 {
+			// Replace existing non-sequence bootcmd
+			data.Content[bootcmdIndex] = bootcmdKey
+			data.Content[bootcmdIndex+1] = bootcmdValue
+		} else {
+			// Add new bootcmd section
+			data.Content = append(data.Content, bootcmdKey, bootcmdValue)
+		}
+	}
+
+	// Marshal back to YAML
+	modifiedUserdata, err := yaml.Marshal(root)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to marshal modified userdata: %w", err)
+	}
+
+	return modifiedUserdata, true, nil
+}
+
+// InitializeIPAllocator initializes the IP allocator with default configuration
+func (r *KubevirtMachineReconciler) InitializeIPAllocator() {
+	if r.IPAllocator == nil {
+		r.IPAllocator = subnetallocator.NewAllocator()
+	}
+}
+
+// getAllocatedIPsAnnotationKey returns the annotation key for storing allocated IPs for a specific network
+func getAllocatedIPsAnnotationKey(networkName string) string {
+	return infrav1.AllocatedIPsAnnotationPrefix + networkName
+}
+
+// setAllocatedIPsAnnotation stores allocated IPs in the machine's annotations
+func (r *KubevirtMachineReconciler) setAllocatedIPsAnnotation(machine *infrav1.KubevirtMachine, networkName string, ips []*net.IPNet) error {
+	if machine.Annotations == nil {
+		machine.Annotations = make(map[string]string)
+	}
+
+	// Convert IPs to JSON for storage
+	ipStrings := make([]string, len(ips))
+	for i, ip := range ips {
+		ipStrings[i] = ip.String()
+	}
+
+	jsonData, err := json.Marshal(ipStrings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal allocated IPs to JSON: %w", err)
+	}
+
+	annotationKey := getAllocatedIPsAnnotationKey(networkName)
+	machine.Annotations[annotationKey] = string(jsonData)
+
+	return nil
+}
+
+// getAllocatedIPsFromAnnotation retrieves allocated IPs from the machine's annotations
+func (r *KubevirtMachineReconciler) getAllocatedIPsFromAnnotation(machine *infrav1.KubevirtMachine, networkName string) ([]*net.IPNet, error) {
+	if machine.Annotations == nil {
+		return nil, nil
+	}
+
+	annotationKey := getAllocatedIPsAnnotationKey(networkName)
+	jsonData, exists := machine.Annotations[annotationKey]
+	if !exists {
+		return nil, nil
+	}
+
+	var ipStrings []string
+	if err := json.Unmarshal([]byte(jsonData), &ipStrings); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal allocated IPs from JSON: %w", err)
+	}
+
+	// Convert strings back to IPNets
+	ips := make([]*net.IPNet, len(ipStrings))
+	for i, ipStr := range ipStrings {
+		ip, ipNet, err := net.ParseCIDR(ipStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse IP %s: %w", ipStr, err)
+		}
+		// Set the IP to the parsed IP (not the network address)
+		ipNet.IP = ip
+		ips[i] = ipNet
+	}
+
+	return ips, nil
+}
+
+// removeAllocatedIPsAnnotation removes the allocated IPs annotation for a specific network
+func (r *KubevirtMachineReconciler) removeAllocatedIPsAnnotation(machine *infrav1.KubevirtMachine, networkName string) {
+	if machine.Annotations == nil {
+		return
+	}
+
+	annotationKey := getAllocatedIPsAnnotationKey(networkName)
+	delete(machine.Annotations, annotationKey)
+}
+
+// AllocateIPsForMachine allocates IPs for a machine based on its NetworkConfig
+func (r *KubevirtMachineReconciler) AllocateIPsForMachine(machine *infrav1.KubevirtMachine, config *infrav1.NetworkConfig) ([]*net.IPNet, error) {
+	if config == nil {
+		return nil, nil
+	}
+
+	if len(config.IPPool) == 0 {
+		return nil, fmt.Errorf("IPPool is required in NetworkConfig")
+	}
+
+	// For backward compatibility, allocate for the first network in IPPool
+	// TODO: Update this to handle multiple networks properly
+	var firstNetworkName string
+	var firstPoolEntry infrav1.IPPoolEntry
+	for networkName, poolEntry := range config.IPPool {
+		firstNetworkName = networkName
+		firstPoolEntry = poolEntry
+		break
+	}
+
+	// Check if IPs are already allocated for this machine from annotations
+	existingIPs, err := r.getAllocatedIPsFromAnnotation(machine, firstNetworkName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get existing allocated IPs: %w", err)
+	}
+	if len(existingIPs) > 0 {
+		return existingIPs, nil
+	}
+
+	// Parse configured subnets (supports CIDR, hyphenated ranges, and single IPs)
+	subnets, rangeConstraints, err := subnetallocator.ParseIPRangesWithConstraints(firstPoolEntry.Subnets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse configured subnets: %w", err)
+	}
+
+	if len(subnets) == 0 {
+		return nil, nil
+	}
+
+	// Create subnet configuration using networkName (shared across VMs in same network)
+	subnetConfig := subnetallocator.SubnetConfig{
+		Name:             firstNetworkName,
+		Subnets:          subnets,
+		ExcludeSubnets:   nil, // Gateway exclusion is now handled by user in their network data
+		RangeConstraints: rangeConstraints,
+	}
+
+	// Add subnet to allocator (this is idempotent for the same network)
+	if err := r.IPAllocator.AddOrUpdateSubnet(subnetConfig); err != nil {
+		return nil, fmt.Errorf("failed to add subnet configuration: %w", err)
+	}
+
+	// Allocate next available IPs from the shared network pool (with range constraints)
+	allocatedIPs, err := r.IPAllocator.AllocateNextIPsWithRangeConstraints(firstNetworkName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate IPs: %w", err)
+	}
+
+	// Store allocated IPs in annotations
+	if err := r.setAllocatedIPsAnnotation(machine, firstNetworkName, allocatedIPs); err != nil {
+		// If annotation storage fails, release the allocated IPs
+		r.IPAllocator.ReleaseIPs(firstNetworkName, allocatedIPs)
+		return nil, fmt.Errorf("failed to store allocated IPs in annotations: %w", err)
+	}
+
+	return allocatedIPs, nil
+}
+
+// ReleaseIPsForMachine releases allocated IPs for a machine
+func (r *KubevirtMachineReconciler) ReleaseIPsForMachine(machine *infrav1.KubevirtMachine, config *infrav1.NetworkConfig) error {
+	if config == nil || len(config.IPPool) == 0 {
+		return nil // No network configuration to release
+	}
+
+	// For backward compatibility, release for the first network in IPPool
+	// TODO: Update this to handle multiple networks properly
+	var firstNetworkName string
+	for networkName := range config.IPPool {
+		firstNetworkName = networkName
+		break
+	}
+
+	// Get allocated IPs from annotations
+	ips, err := r.getAllocatedIPsFromAnnotation(machine, firstNetworkName)
+	if err != nil {
+		return fmt.Errorf("failed to get allocated IPs from annotations: %w", err)
+	}
+
+	if len(ips) == 0 {
+		return nil // No IPs to release
+	}
+
+	// Release IPs from allocator using the network name
+	if err := r.IPAllocator.ReleaseIPs(firstNetworkName, ips); err != nil {
+		return fmt.Errorf("failed to release IPs: %w", err)
+	}
+
+	// Remove annotation
+	r.removeAllocatedIPsAnnotation(machine, firstNetworkName)
+
+	return nil
 }

@@ -49,6 +49,30 @@ spec:
           spec:
             description: KubevirtMachineSpec defines the desired state of KubevirtMachine.
             properties:
+              bootstrapNetworkConfig:
+                properties:
+                  interface:
+                    default: enp1s0
+                    type: string
+                  networkData:
+                    description: |-
+                      NetworkData contains user-provided cloud-init network data in YAML format.
+                      The system will find the interface specified in Interface field and inject
+                      allocated IP addresses into this network configuration.
+                    type: string
+                  networkName:
+                    type: string
+                  subnets:
+                    description: |-
+                      Subnets specify IP ranges from which addresses will be allocated for this interface.
+                      Supports CIDR notation, hyphenated ranges, and single IPs.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - networkName
+                - subnets
+                type: object
               infraClusterSecretRef:
                 description: |-
                   InfraClusterSecretRef is a reference to a secret with a kubeconfig for external cluster used for infra.

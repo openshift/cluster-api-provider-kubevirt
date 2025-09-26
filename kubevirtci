@@ -16,6 +16,7 @@ export CAPK_TEMPLATE=${CAPK_TEMPLATE:-cluster-template-kccm.yaml}
 export CLUSTERCTL_VERSION="$(curl https://api.github.com/repos/kubernetes-sigs/cluster-api/releases/latest | jq -r .name)"
 export CALICO_VERSION="v3.29.1"
 export KUBEVIRT_VERSION="v1.5.0"
+export MULTUS_VERSION="v4.2.2"
 export NODE_VM_IMAGE_TEMPLATE=${NODE_VM_IMAGE_TEMPLATE:-quay.io/capk/ubuntu-2404-container-disk:${TENANT_CLUSTER_KUBERNETES_VERSION}}
 
 KUBEVIRTCI_REPO='https://github.com/kubevirt/kubevirtci.git'
@@ -58,6 +59,7 @@ function kubevirtci::usage() {
 
 	  install-capk                      Installs capk from published release manifests
 	  install-metallb                   Installs metallb into the infra cluster
+	  install-multus                    Installs multus CNI into the infra cluster
 	  install-calico                    Installs calico cni into tenant cluster
 	  curl-lb <lb name> [lb namespace]  Curls lb service within infra cluster
 
@@ -258,6 +260,16 @@ function kubevirtci::install_calico {
 
 }
 
+function kubevirtci::install_multus {
+	echo "Installing multus CNI ${MULTUS_VERSION}..."
+	${_kubectl} apply -f https://raw.githubusercontent.com/k8snetworkplumbingwg/multus-cni/${MULTUS_VERSION}/deployments/multus-daemonset-thick.yml
+
+	echo "Waiting for multus daemonset rollout"
+	${_kubectl} rollout status ds/kube-multus-ds -n kube-system --timeout=5m
+
+	echo "multus CNI ${MULTUS_VERSION} installed!"
+}
+
 function kubevirtci::install_metallb {
 	${_kubectl} apply -f https://raw.githubusercontent.com/metallb/metallb/${METALLB_VERSION}/config/manifests/metallb-native.yaml
 
@@ -397,6 +409,9 @@ case ${_action} in
 	;;
 "install-metallb")
 	kubevirtci::install_metallb
+	;;
+"install-multus")
+	kubevirtci::install_multus
 	;;
 "install-calico")
 	kubevirtci::install_calico

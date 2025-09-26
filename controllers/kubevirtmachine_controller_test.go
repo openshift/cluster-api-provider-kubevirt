@@ -226,6 +226,58 @@ runcmd:
 		),
 		Entry("should not be added to non cloud-init config", []byte("hello: world"), "sha-rsa 5678", nil),
 	)
+
+	DescribeTable("bootcmd",
+		func(userData []byte, expectedOrNil []byte) {
+			actual, modified, err := addBootcmdToCloudInitConfig(userData)
+			Expect(err).ShouldNot(HaveOccurred())
+			if expectedOrNil == nil {
+				Expect(modified).To(BeFalse())
+				Expect(string(actual)).To(Equal(string(userData)))
+			} else {
+				Expect(modified).To(BeTrue())
+				Expect(string(actual)).To(Equal(string(expectedOrNil)))
+			}
+		},
+		Entry(
+			"should be added to cloud-init config",
+			[]byte(`#cloud-config
+users:
+  - name: johndoe
+    group: users
+runcmd:
+  - 'kubeadm init --config /run/kubeadm/kubeadm.yaml'
+`),
+			[]byte(`#cloud-config
+users:
+    - name: johndoe
+      group: users
+runcmd:
+    - 'kubeadm init --config /run/kubeadm/kubeadm.yaml'
+bootcmd:
+    - rm -rf /etc/netplan/*
+`),
+		),
+		Entry(
+			"should be appended to existing bootcmd",
+			[]byte(`#cloud-config
+bootcmd:
+  - echo "existing command"
+users:
+  - name: johndoe
+    group: users
+`),
+			[]byte(`#cloud-config
+bootcmd:
+    - echo "existing command"
+    - rm -rf /etc/netplan/*
+users:
+    - name: johndoe
+      group: users
+`),
+		),
+		Entry("should not be added to non cloud-init config", []byte("hello: world"), nil),
+	)
 })
 
 var _ = Describe("reconcile a kubevirt machine", func() {

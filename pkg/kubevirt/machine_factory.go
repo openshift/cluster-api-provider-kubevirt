@@ -4,6 +4,7 @@ package kubevirt
 
 import (
 	gocontext "context"
+	"net"
 	"time"
 
 	"github.com/pkg/errors"
@@ -50,6 +51,8 @@ type MachineInterface interface {
 type MachineFactory interface {
 	// NewMachine returns a new Machine service for the given context.
 	NewMachine(ctx *context.MachineContext, client client.Client, namespace string, sshKeys *ssh.ClusterNodeSshKeys) (MachineInterface, error)
+	// NewMachineWithIPs returns a new Machine service for the given context with allocated IPs.
+	NewMachineWithIPs(ctx *context.MachineContext, client client.Client, namespace string, sshKeys *ssh.ClusterNodeSshKeys, allocatedIPs []*net.IPNet) (MachineInterface, error)
 }
 
 // DefaultMachineFactory is the default implementation of MachineFactory
@@ -59,6 +62,15 @@ type DefaultMachineFactory struct {
 // NewMachine creates a new kubevirt.machine
 func (defaultMachineFactory DefaultMachineFactory) NewMachine(ctx *context.MachineContext, client client.Client, namespace string, sshKeys *ssh.ClusterNodeSshKeys) (MachineInterface, error) {
 	externalMachine, err := NewMachine(ctx, client, namespace, sshKeys)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create helper for managing the externalMachine")
+	}
+	return externalMachine, nil
+}
+
+// NewMachineWithIPs creates a new kubevirt.machine with allocated IPs
+func (defaultMachineFactory DefaultMachineFactory) NewMachineWithIPs(ctx *context.MachineContext, client client.Client, namespace string, sshKeys *ssh.ClusterNodeSshKeys, allocatedIPs []*net.IPNet) (MachineInterface, error) {
+	externalMachine, err := NewMachineWithIPs(ctx, client, namespace, sshKeys, allocatedIPs)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create helper for managing the externalMachine")
 	}

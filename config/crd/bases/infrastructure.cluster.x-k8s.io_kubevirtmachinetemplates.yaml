@@ -96,6 +96,37 @@ spec:
                             type: string
                         type: object
                         x-kubernetes-map-type: atomic
+                      networkConfig:
+                        properties:
+                          cloudInitNetworkData:
+                            description: |-
+                              CloudInitNetworkData contains user-provided cloud-init network data in YAML format.
+                              The system will find the interface specified in IPPool entries and inject
+                              allocated IP addresses into this network configuration.
+                            type: string
+                          ipPool:
+                            additionalProperties:
+                              properties:
+                                interfaceName:
+                                  type: string
+                                subnets:
+                                  description: |-
+                                    Subnets specify IP ranges from which addresses will be allocated for this interface.
+                                    Supports CIDR notation, hyphenated ranges, and single IPs.
+                                  items:
+                                    type: string
+                                  type: array
+                              required:
+                              - interfaceName
+                              - subnets
+                              type: object
+                            description: |-
+                              IPPool is a map where the key is the network name and the value contains
+                              the interface name and subnets for that network.
+                            type: object
+                        required:
+                        - ipPool
+                        type: object
                       providerID:
                         description: ProviderID TBD what to use for Kubevirt
                         type: string

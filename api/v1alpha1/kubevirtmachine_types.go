@@ -28,6 +28,10 @@ const (
 	// MachineFinalizer allows ReconcileKubevirtMachine to clean up resources associated with machine before
 	// removing it from the apiserver.
 	MachineFinalizer = "kubevirtmachine.infrastructure.cluster.x-k8s.io"
+
+	// AllocatedIPsAnnotationPrefix is the prefix for annotations storing allocated IPs per network
+	// The full annotation key will be: AllocatedIPsAnnotationPrefix + networkName
+	AllocatedIPsAnnotationPrefix = "infrastructure.cluster.x-k8s.io/allocated-ips-"
 )
 
 // VirtualMachineTemplateSpec defines the desired state of the kubevirt VM.
@@ -55,6 +59,8 @@ type KubevirtMachineSpec struct {
 	// When nil, this defaults to the value present in the KubevirtCluster object's spec associated with this machine.
 	// +optional
 	InfraClusterSecretRef *corev1.ObjectReference `json:"infraClusterSecretRef,omitempty"`
+
+	NetworkConfig *NetworkConfig `json:"networkConfig,omitempty"`
 }
 
 // VirtualMachineBootstrapCheckSpec defines how the controller will remotely check CAPI Sentinel file content.
@@ -66,6 +72,27 @@ type VirtualMachineBootstrapCheckSpec struct {
 	// +kubebuilder:validation:Enum=none;ssh
 	// +kubebuilder:default:=ssh
 	CheckStrategy string `json:"checkStrategy,omitempty"`
+}
+
+type IPPoolEntry struct {
+	// +required
+	InterfaceName string `json:"interfaceName"`
+	// Subnets specify IP ranges from which addresses will be allocated for this interface.
+	// Supports CIDR notation, hyphenated ranges, and single IPs.
+	// +required
+	Subnets []string `json:"subnets"`
+}
+
+type NetworkConfig struct {
+	// CloudInitNetworkData contains user-provided cloud-init network data in YAML format.
+	// The system will find the interface specified in IPPool entries and inject
+	// allocated IP addresses into this network configuration.
+	// +optional
+	CloudInitNetworkData string `json:"cloudInitNetworkData,omitempty"`
+	// IPPool is a map where the key is the network name and the value contains
+	// the interface name and subnets for that network.
+	// +required
+	IPPool map[string]IPPoolEntry `json:"ipPool"`
 }
 
 // KubevirtMachineStatus defines the observed state of KubevirtMachine.

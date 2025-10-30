@@ -104,7 +104,7 @@ replace (
 	k8s.io/component-base => k8s.io/component-base v0.26.3
 	k8s.io/cri-api => k8s.io/cri-api v0.26.3
 	k8s.io/csi-translation-lib => k8s.io/csi-translation-lib v0.26.3
-	k8s.io/klog => k8s.io/klog v0.4.0
+	k8s.io/klog/v2 => k8s.io/klog v2.130.1
 	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.26.3
 	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.26.3
 	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20221012153701-172d655c2280

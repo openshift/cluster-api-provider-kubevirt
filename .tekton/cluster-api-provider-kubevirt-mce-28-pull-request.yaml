@@ -49,7 +49,8 @@ spec:
       value: main
     - name: pathInRepo
       value: pipelines/common_mce_2.8.yaml
-  taskRunTemplate: {}
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-cluster-api-provider-kubevirt-mce-28
   workspaces:
   - name: git-auth
     secret:

@@ -118,7 +118,7 @@ replace (
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.26.3
 	k8s.io/sample-cli-plugin => k8s.io/sample-cli-plugin v0.26.3
 	k8s.io/sample-controller => k8s.io/sample-controller v0.26.3
-	kubevirt.io/client-go => kubevirt.io/client-go v1.0.0
+	kubevirt.io/client-go => kubevirt.io/client-go v1.7.0
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client => sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.0.24
 	sigs.k8s.io/cluster-api => sigs.k8s.io/cluster-api v1.4.0
 	sigs.k8s.io/cluster-api-provider-kubevirt => ../

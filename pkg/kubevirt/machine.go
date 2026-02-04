@@ -97,7 +97,7 @@ func NewMachine(ctx *context.MachineContext, client client.Client, namespace str
 	if machine.vmInstance != nil {
 		for _, dvTemp := range machine.vmInstance.Spec.DataVolumeTemplates {
 			dv := &cdiv1.DataVolume{}
-			err = client.Get(ctx.Context, types.NamespacedName{Name: dvTemp.ObjectMeta.Name, Namespace: namespace}, dv)
+			err = client.Get(ctx.Context, types.NamespacedName{Name: dvTemp.Name, Namespace: namespace}, dv)
 			if err != nil {
 				if !apierrors.IsNotFound(err) {
 					return nil, err
@@ -232,6 +232,20 @@ func (m *Machine) Address() string {
 	return ""
 }
 
+// Addresses returns all IP addresses of the VM (for dual-stack support).
+// It collects IPs from all network interfaces, supporting both IPv4 and IPv6.
+func (m *Machine) Addresses() []string {
+	if m.vmiInstance == nil {
+		return nil
+	}
+
+	var addresses []string
+	for _, iface := range m.vmiInstance.Status.Interfaces {
+		addresses = append(addresses, iface.IPs...)
+	}
+	return addresses
+}
+
 // IsReady checks if the VM is ready
 func (m *Machine) IsReady() bool {
 	return m.hasReadyCondition()
@@ -274,9 +288,10 @@ func (m *Machine) GetVMNotReadyReason() (reason string, message string) {
 
 	cond := m.getVMCondition(kubevirtv1.VirtualMachineConditionType(corev1.PodScheduled))
 	if cond != nil {
-		if cond.Status == corev1.ConditionTrue {
+		switch cond.Status {
+		case corev1.ConditionTrue:
 			return
-		} else if cond.Status == corev1.ConditionFalse {
+		case corev1.ConditionFalse:
 			if cond.Reason == "Unschedulable" {
 				return "Unschedulable", cond.Message
 			}

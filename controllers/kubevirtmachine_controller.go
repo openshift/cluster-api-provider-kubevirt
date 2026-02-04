@@ -74,7 +74,7 @@ func (r *KubevirtMachineReconciler) Reconcile(goctx gocontext.Context, req ctrl.
 
 	// Fetch the KubevirtMachine instance.
 	kubevirtMachine := &infrav1.KubevirtMachine{}
-	if err := r.Client.Get(goctx, req.NamespacedName, kubevirtMachine); err != nil {
+	if err := r.Get(goctx, req.NamespacedName, kubevirtMachine); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -94,7 +94,7 @@ func (r *KubevirtMachineReconciler) Reconcile(goctx gocontext.Context, req ctrl.
 	log = log.WithValues("machine", machine.Name)
 
 	// Handle deleted machines
-	if !kubevirtMachine.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !kubevirtMachine.DeletionTimestamp.IsZero() {
 		// Create the machine context for this request.
 		// Deletion shouldn't require the presence of a
 		// cluster or kubevirtcluster object as those objects
@@ -127,7 +127,7 @@ func (r *KubevirtMachineReconciler) Reconcile(goctx gocontext.Context, req ctrl.
 		Namespace: kubevirtMachine.Namespace,
 		Name:      cluster.Spec.InfrastructureRef.Name,
 	}
-	if err := r.Client.Get(goctx, kubevirtClusterName, kubevirtCluster); err != nil {
+	if err := r.Get(goctx, kubevirtClusterName, kubevirtCluster); err != nil {
 		log.Info("KubevirtCluster is not available yet")
 		return ctrl.Result{}, nil
 	}
@@ -323,24 +323,35 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 		ctx.Logger.Info("Underlying VM has boostrapped.")
 	}
 
-	ctx.KubevirtMachine.Status.Addresses = []clusterv1.MachineAddress{
+	// Build the machine addresses list with all IPs for dual-stack support
+	machineAddresses := []clusterv1.MachineAddress{
 		{
 			Type:    clusterv1.MachineHostName,
 			Address: ctx.KubevirtMachine.Name,
 		},
-		{
-			Type:    clusterv1.MachineInternalIP,
-			Address: ipAddress,
-		},
-		{
-			Type:    clusterv1.MachineExternalIP,
-			Address: ipAddress,
-		},
-		{
-			Type:    clusterv1.MachineInternalDNS,
-			Address: ctx.KubevirtMachine.Name,
-		},
 	}
+
+	// Add all IP addresses from the VMI interfaces (supports dual-stack IPv4/IPv6)
+	allAddresses := externalMachine.Addresses()
+	for _, addr := range allAddresses {
+		machineAddresses = append(machineAddresses,
+			clusterv1.MachineAddress{
+				Type:    clusterv1.MachineInternalIP,
+				Address: addr,
+			},
+			clusterv1.MachineAddress{
+				Type:    clusterv1.MachineExternalIP,
+				Address: addr,
+			},
+		)
+	}
+
+	machineAddresses = append(machineAddresses, clusterv1.MachineAddress{
+		Type:    clusterv1.MachineInternalDNS,
+		Address: ctx.KubevirtMachine.Name,
+	})
+
+	ctx.KubevirtMachine.Status.Addresses = machineAddresses
 
 	if ctx.KubevirtMachine.Spec.ProviderID == nil || *ctx.KubevirtMachine.Spec.ProviderID == "" {
 		providerID, err := externalMachine.GenerateProviderID()
@@ -537,7 +548,7 @@ func (r *KubevirtMachineReconciler) KubevirtClusterToKubevirtMachines(ctx gocont
 
 	labels := map[string]string{clusterv1.ClusterNameLabel: cluster.Name}
 	machineList := &clusterv1.MachineList{}
-	if err := r.Client.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
+	if err := r.List(ctx, machineList, client.InNamespace(c.Namespace), client.MatchingLabels(labels)); err != nil {
 		return nil
 	}
 	for _, m := range machineList.Items {
@@ -559,7 +570,7 @@ func (r *KubevirtMachineReconciler) reconcileKubevirtBootstrapSecret(ctx *contex
 
 	s := &corev1.Secret{}
 	key := client.ObjectKey{Namespace: ctx.Machine.GetNamespace(), Name: *ctx.Machine.Spec.Bootstrap.DataSecretName}
-	if err := r.Client.Get(ctx, key, s); err != nil {
+	if err := r.Get(ctx, key, s); err != nil {
 		return errors.Wrapf(err, "failed to retrieve bootstrap data secret for KubevirtMachine %s/%s", ctx.Machine.GetNamespace(), ctx.Machine.GetName())
 	}
 

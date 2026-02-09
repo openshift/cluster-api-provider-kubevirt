@@ -8,7 +8,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.13.0
 	github.com/onsi/gomega v1.28.0
 	github.com/pkg/errors v0.9.1
-	github.com/spf13/cobra v1.7.0
+	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
 	golang.org/x/crypto v0.32.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -23,8 +23,8 @@ require (
 	kubevirt.io/containerized-data-importer-api v1.57.0
 	sigs.k8s.io/cluster-api v1.5.2
 	sigs.k8s.io/controller-runtime v0.16.2
-	sigs.k8s.io/kind v0.20.0
-	sigs.k8s.io/yaml v1.3.0
+	sigs.k8s.io/kind v0.31.0
+	sigs.k8s.io/yaml v1.4.0
 )
 
 require (

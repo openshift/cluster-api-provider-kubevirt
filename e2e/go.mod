@@ -13,7 +13,7 @@ require (
 	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
 	kubevirt.io/api v1.0.0
 	kubevirt.io/client-go v0.0.0-00010101000000-000000000000
-	sigs.k8s.io/cluster-api v1.5.2
+	sigs.k8s.io/cluster-api v1.12.3
 	sigs.k8s.io/cluster-api-provider-kubevirt v0.0.0-00010101000000-000000000000
 	sigs.k8s.io/controller-runtime v0.16.2
 	sigs.k8s.io/kind v0.20.0
@@ -120,7 +120,7 @@ replace (
 	k8s.io/sample-controller => k8s.io/sample-controller v0.26.3
 	kubevirt.io/client-go => kubevirt.io/client-go v1.0.0
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client => sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.0.24
-	sigs.k8s.io/cluster-api => sigs.k8s.io/cluster-api v1.4.0
+	sigs.k8s.io/cluster-api => sigs.k8s.io/cluster-api v1.12.3
 	sigs.k8s.io/cluster-api-provider-kubevirt => ../
 	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.14.5
 )

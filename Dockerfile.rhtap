@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o manager .
 
 # Copy the controller-manager into a thin image
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.7-1771346502
 LABEL \
     name="multicluster-engine/cluster-api-provider-kubevirt-rhel9" \
     cpe="cpe:/a:redhat:multicluster_engine:2.8::el9" \

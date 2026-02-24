@@ -11,7 +11,7 @@ require (
 	k8s.io/apimachinery v0.28.3
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/utils v0.0.0-20240102154912-e7106e64919e
-	kubevirt.io/api v1.0.0
+	kubevirt.io/api v1.7.1
 	kubevirt.io/client-go v0.0.0-00010101000000-000000000000
 	sigs.k8s.io/cluster-api v1.5.2
 	sigs.k8s.io/cluster-api-provider-kubevirt v0.0.0-00010101000000-000000000000

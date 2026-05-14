@@ -1,6 +1,6 @@
 module sigs.k8s.io/cluster-api-provider-aws/hack/tools
 
-go 1.22.0
+go 1.23
 
 require (
 	gotest.tools/gotestsum v1.12.0
@@ -42,7 +42,7 @@ require (
 	k8s.io/gengo/v2 v2.0.0-20240228010128-51d4e06bde70 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect
-	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
+	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
 )

@@ -24,7 +24,7 @@ patchesJson6902:
     name: kubevirt-cloud-controller-manager
 
 bases:
-- https://github.com/kubevirt/cloud-provider-kubevirt/config/isolated?ref=v0.5.1
+- https://github.com/kubevirt/cloud-provider-kubevirt/config/isolated?ref=v0.6.0
 commonLabels:
   cluster.x-k8s.io/cluster-name: "${CLUSTER_NAME}"
   capk.cluster.x-k8s.io/template-kind: "extra-resource"

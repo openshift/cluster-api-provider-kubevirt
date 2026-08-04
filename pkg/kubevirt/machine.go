@@ -431,10 +431,8 @@ func (m *Machine) Delete() error {
 
 func (m *Machine) DrainNodeIfNeeded(wrkldClstr workloadcluster.WorkloadCluster) (time.Duration, error) {
 	if m.vmiInstance == nil || !m.shouldGracefulDeleteVMI() {
-		if _, anntExists := m.machineContext.KubevirtMachine.Annotations[infrav1.VmiDeletionGraceTime]; anntExists {
-			if err := m.removeGracePeriodAnnotation(); err != nil {
-				return 100 * time.Millisecond, err
-			}
+		if err := m.cleanupMigrationAnnotations(); err != nil {
+			return 100 * time.Millisecond, err
 		}
 
 		// Only uncordon when the VMI is back and not being deleted. If the VMI
@@ -448,6 +446,30 @@ func (m *Machine) DrainNodeIfNeeded(wrkldClstr workloadcluster.WorkloadCluster) 
 		}
 
 		return 0, nil
+	}
+
+	// For migratable VMIs, attempt live migration before the disruptive
+	// drain+delete path. If migration succeeds, the guest node is untouched.
+	if m.vmiInstance.IsMigratable() {
+		migrated, requeueAfter, err := m.tryMigrateVMI()
+		if err != nil {
+			return 0, err
+		}
+		if migrated {
+			if err := m.cleanupMigrationAnnotations(); err != nil {
+				return 100 * time.Millisecond, err
+			}
+			return 0, nil
+		}
+		if requeueAfter > 0 {
+			return requeueAfter, nil
+		}
+		// Migration failed or timed out -- clean up migration annotations
+		// and reset the grace period so the drain+delete fallback gets a
+		// fresh timeout window.
+		if err := m.cleanupMigrationAnnotations(); err != nil {
+			return 100 * time.Millisecond, err
+		}
 	}
 
 	exceeded, err := m.drainGracePeriodExceeded()
@@ -484,6 +506,8 @@ func (m *Machine) DrainNodeIfNeeded(wrkldClstr workloadcluster.WorkloadCluster) 
 
 const removeGracePeriodAnnotationPatch = `[{"op": "remove", "path": "/metadata/annotations/` + infrav1.VmiDeletionGraceTimeEscape + `"}]`
 
+const cleanupMigrationAnnotationsPatch = `{"metadata":{"annotations":{"` + infrav1.VmiMigrationSubmitted + `": null, "` + infrav1.VmiDeletionGraceTime + `": null}}}`
+
 func (m *Machine) removeGracePeriodAnnotation() error {
 	patch := client.RawPatch(types.JSONPatchType, []byte(removeGracePeriodAnnotationPatch))
 
@@ -491,6 +515,24 @@ func (m *Machine) removeGracePeriodAnnotation() error {
 		return fmt.Errorf("failed to remove the %s annotation to the KubeVirtMachine %s; %w", infrav1.VmiDeletionGraceTime, m.machineContext.KubevirtMachine.Name, err)
 	}
 
+	return nil
+}
+
+// cleanupMigrationAnnotations removes both the migration-submitted marker and
+// the grace period annotation in a single merge patch. Setting a key to null
+// in a merge patch removes it; if the key does not exist, it is a no-op.
+func (m *Machine) cleanupMigrationAnnotations() error {
+	annotations := m.machineContext.KubevirtMachine.Annotations
+	_, hasMigration := annotations[infrav1.VmiMigrationSubmitted]
+	_, hasGrace := annotations[infrav1.VmiDeletionGraceTime]
+	if !hasMigration && !hasGrace {
+		return nil
+	}
+
+	patchRequest := client.RawPatch(types.MergePatchType, []byte(cleanupMigrationAnnotationsPatch))
+	if err := m.client.Patch(m.machineContext, m.machineContext.KubevirtMachine, patchRequest); err != nil {
+		return fmt.Errorf("failed to clean up migration annotations on KubevirtMachine %s: %w", m.machineContext.KubevirtMachine.Name, err)
+	}
 	return nil
 }
 
@@ -558,6 +600,97 @@ func (m *Machine) uncordonNodeIfNeeded(wrkldClstr workloadcluster.WorkloadCluste
 	}
 
 	return m.removeNodeCordonedAnnotation()
+}
+
+// tryMigrateVMI attempts to live-migrate a migratable VMI instead of the
+// disruptive drain+delete path. It returns:
+//   - migrated=true when the VMI has already moved to a different host
+//   - requeueAfter>0 when a migration is in progress or was just created
+//   - both zero when migration failed/timed out (caller should fall through to drain+delete)
+//
+// The grace period timer is deliberately deferred until the migration is
+// actively in progress (MigrationState is set). This ensures that on dense
+// nodes where KubeVirt serializes outbound migrations (1 at a time), VMs
+// waiting in the migration queue don't burn through their timeout window
+// before their migration even starts.
+func (m *Machine) tryMigrateVMI() (migrated bool, requeueAfter time.Duration, err error) {
+	// If the VMI is already on a different node than the evacuation source,
+	// migration has succeeded -- no guest disruption needed.
+	if m.vmiInstance.Status.NodeName != m.vmiInstance.Status.EvacuationNodeName {
+		m.machineContext.Logger.Info("VMI successfully migrated, skipping drain+delete",
+			"from", m.vmiInstance.Status.EvacuationNodeName,
+			"to", m.vmiInstance.Status.NodeName)
+		return true, 0, nil
+	}
+
+	if ms := m.vmiInstance.Status.MigrationState; ms != nil {
+		if ms.Failed {
+			m.machineContext.Logger.Info("VMI migration failed, falling back to drain+delete",
+				"vmi", m.vmiInstance.Name)
+			return false, 0, nil
+		}
+		if !ms.Completed {
+			// Migration is actively in progress -- the grace period timer
+			// starts here (not when the migration CR was first created).
+			exceeded, err := m.drainGracePeriodExceeded()
+			if err != nil {
+				return false, 0, err
+			}
+			if exceeded {
+				m.machineContext.Logger.Info("Migration timeout exceeded while migration in progress, falling back to drain+delete",
+					"vmi", m.vmiInstance.Name)
+				return false, 0, nil
+			}
+			m.machineContext.Logger.Info("VMI migration in progress, waiting",
+				"vmi", m.vmiInstance.Name)
+			return false, 10 * time.Second, nil
+		}
+	}
+
+	// No active migration. Check if we've already submitted a migration CR
+	// on a previous reconcile (waiting for KubeVirt to pick it up).
+	if _, exists := m.machineContext.KubevirtMachine.Annotations[infrav1.VmiMigrationSubmitted]; exists {
+		m.machineContext.Logger.Info("Migration already submitted, waiting for KubeVirt to start it",
+			"vmi", m.vmiInstance.Name)
+		return false, 10 * time.Second, nil
+	}
+
+	// First reconcile for this evacuation -- create a migration CR.
+	priority := kubevirtv1.PrioritySystemCritical
+	migration := &kubevirtv1.VirtualMachineInstanceMigration{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: m.vmiInstance.Name + "-migration-",
+			Namespace:    m.vmiInstance.Namespace,
+		},
+		Spec: kubevirtv1.VirtualMachineInstanceMigrationSpec{
+			VMIName:  m.vmiInstance.Name,
+			Priority: &priority,
+		},
+	}
+
+	if err := m.client.Create(m.machineContext, migration); err != nil {
+		m.machineContext.Logger.Error(err, "Failed to create VirtualMachineInstanceMigration, falling back to drain+delete",
+			"vmi", m.vmiInstance.Name)
+		return false, 0, nil
+	}
+
+	if err := m.setMigrationSubmittedAnnotation(); err != nil {
+		return false, 0, err
+	}
+
+	m.machineContext.Logger.Info("Created VirtualMachineInstanceMigration for migratable VMI",
+		"migration", migration.Name, "vmi", m.vmiInstance.Name)
+
+	return false, 10 * time.Second, nil
+}
+
+func (m *Machine) setMigrationSubmittedAnnotation() error {
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{"%s": "true"}}}`, infrav1.VmiMigrationSubmitted)
+	patchRequest := client.RawPatch(types.MergePatchType, []byte(patch))
+	if err := m.client.Patch(m.machineContext, m.machineContext.KubevirtMachine, patchRequest); err != nil {
+		return fmt.Errorf("failed to set the %s annotation on KubevirtMachine %s: %w", infrav1.VmiMigrationSubmitted, m.machineContext.KubevirtMachine.Name, err)
+	}
+	return nil
 }
 
 func (m *Machine) shouldGracefulDeleteVMI() bool {

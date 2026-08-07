@@ -1,6 +1,6 @@
 module sigs.k8s.io/cluster-api-provider-aws/hack/tools
 
-go 1.22.0
+go 1.23
 
 require (
 	gotest.tools/gotestsum v1.12.0
@@ -12,7 +12,7 @@ require (
 	github.com/bitfield/gotestdox v0.2.2 // indirect
 	github.com/dnephin/pflag v1.0.7 // indirect
 	github.com/fatih/color v1.16.0 // indirect
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/gobuffalo/flect v1.0.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

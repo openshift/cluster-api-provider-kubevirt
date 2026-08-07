@@ -17,10 +17,10 @@ require (
 	k8s.io/apimachinery v0.34.3
 	k8s.io/client-go v0.34.3
 	k8s.io/component-base v0.34.3
-	k8s.io/klog/v2 v2.130.1
+	k8s.io/klog/v2 v2.140.0
 	k8s.io/kubectl v0.34.3
-	k8s.io/utils v0.0.0-20251222233032-718f0e51e6d2
-	kubevirt.io/api v1.7.0
+	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
+	kubevirt.io/api v1.9.0
 	kubevirt.io/containerized-data-importer-api v1.64.0
 	sigs.k8s.io/cluster-api v1.11.4
 	sigs.k8s.io/controller-runtime v0.22.4
@@ -142,5 +142,5 @@ require (
 	sigs.k8s.io/kustomize/api v0.21.0 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.21.0 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.3.1 // indirect
+	sigs.k8s.io/structured-merge-diff/v6 v6.3.2-0.20260122202528-d9cc6641c482 // indirect
 )

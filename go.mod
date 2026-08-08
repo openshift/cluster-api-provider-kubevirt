@@ -17,7 +17,7 @@ require (
 	k8s.io/apimachinery v0.34.3
 	k8s.io/client-go v0.34.3
 	k8s.io/component-base v0.34.3
-	k8s.io/klog/v2 v2.130.1
+	k8s.io/klog/v2 v2.140.0
 	k8s.io/kubectl v0.34.3
 	k8s.io/utils v0.0.0-20251222233032-718f0e51e6d2
 	kubevirt.io/api v1.7.0

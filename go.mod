@@ -21,7 +21,7 @@ require (
 	k8s.io/kubectl v0.34.3
 	k8s.io/utils v0.0.0-20251222233032-718f0e51e6d2
 	kubevirt.io/api v1.7.0
-	kubevirt.io/containerized-data-importer-api v1.64.0
+	kubevirt.io/containerized-data-importer-api v1.66.0
 	sigs.k8s.io/cluster-api v1.11.4
 	sigs.k8s.io/controller-runtime v0.22.4
 	sigs.k8s.io/kind v0.31.0

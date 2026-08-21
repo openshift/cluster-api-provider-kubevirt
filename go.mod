@@ -10,7 +10,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/pflag v1.0.5
-	golang.org/x/crypto v0.32.0
+	golang.org/x/crypto v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.32.0
 	k8s.io/apimachinery v0.32.0
@@ -111,5 +111,5 @@ require (
 // fix CVE-2026-39829 (and CVE-2024-45337, CVE-2026-39832)
 replace golang.org/x/crypto => github.com/openshift-sustaining/crypto v0.41.0-sec.4
 
-// fix CVE-2024-45338
-replace golang.org/x/net => golang.org/x/net v0.34.0
+// fix CVE-2026-25681
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.43.0-sec.4

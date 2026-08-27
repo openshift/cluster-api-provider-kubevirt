@@ -228,9 +228,11 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 		os.Exit(1)
 	}
 
+	controllerNS := resolveControllerNamespace()
+
 	if err := (&controllers.KubevirtMachineReconciler{
 		Client:          mgr.GetClient(),
-		InfraCluster:    infracluster.New(mgr.GetClient(), noCachedClient),
+		InfraCluster:    infracluster.New(mgr.GetClient(), noCachedClient, controllerNS),
 		WorkloadCluster: workloadcluster.New(mgr.GetClient()),
 		MachineFactory:  kubevirt.DefaultMachineFactory{},
 	}).SetupWithManager(ctx, mgr, controller.Options{
@@ -243,7 +245,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 	if err := (&controllers.KubevirtClusterReconciler{
 		Client:       mgr.GetClient(),
 		APIReader:    mgr.GetAPIReader(),
-		InfraCluster: infracluster.New(mgr.GetClient(), noCachedClient),
+		InfraCluster: infracluster.New(mgr.GetClient(), noCachedClient, controllerNS),
 		Log:          ctrl.Log.WithName("controllers").WithName("KubevirtCluster"),
 	}).SetupWithManager(ctx, mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KubevirtCluster")
@@ -261,8 +263,19 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) {
 }
 
 func setupWebhooks(mgr ctrl.Manager) {
-	if err := webhookhandler.SetupWebhookWithManager(mgr); err != nil {
+	controllerNS := resolveControllerNamespace()
+	if err := webhookhandler.SetupWebhookWithManager(mgr, controllerNS); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "KubevirtMachineTemplate")
 		os.Exit(1)
 	}
+}
+
+func resolveControllerNamespace() string {
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+		return string(data)
+	}
+	return ""
 }

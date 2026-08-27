@@ -70,7 +70,7 @@ func GetLoadBalancerNamespace(kc *infrav1.KubevirtCluster, infraClusterNamespace
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=kubevirtclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=kubevirtclusters/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=services;,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services;,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts;configmaps,verbs=delete;list
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=delete;list
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=delete;list

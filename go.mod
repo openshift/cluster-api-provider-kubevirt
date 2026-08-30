@@ -23,7 +23,7 @@ require (
 	kubevirt.io/containerized-data-importer-api v1.63.1
 	sigs.k8s.io/cluster-api v1.10.9
 	sigs.k8s.io/controller-runtime v0.20.4
-	sigs.k8s.io/kind v0.31.0
+	sigs.k8s.io/kind v0.33.0
 	sigs.k8s.io/yaml v1.6.0
 )
 

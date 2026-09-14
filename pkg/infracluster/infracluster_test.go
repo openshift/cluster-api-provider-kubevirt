@@ -44,11 +44,90 @@ var _ = Describe("InfraCluster", func() {
 	It("should return the management client and namespace when the infrastructure secret reference is nil", func() {
 		fakeClient = fake.NewClientBuilder().WithScheme(testing.SetupScheme()).Build()
 
-		infraCluster := New(fakeClient, fakeClient)
+		infraCluster := New(fakeClient, fakeClient, "")
 		infraClient, infraNamespace, err := infraCluster.GenerateInfraClusterClient(nil, ownerNamespace, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(infraClient).To(BeIdenticalTo(fakeClient))
 		Expect(infraNamespace).To(Equal(ownerNamespace))
+	})
+
+	It("should reject a cross-namespace infraClusterSecretRef", func() {
+		fakeClient := fake.NewClientBuilder().WithScheme(testing.SetupScheme()).Build()
+
+		infraClusterSecretRef := &corev1.ObjectReference{
+			APIVersion: "v1",
+			Kind:       "Secret",
+			Name:       infraSecretName,
+			Namespace:  "other-namespace",
+		}
+		infraCluster := New(fakeClient, nil, "controller-ns")
+
+		_, _, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("infraClusterSecretRef.namespace must match"))
+		Expect(err.Error()).To(ContainSubstring(ownerNamespace))
+		Expect(err.Error()).To(ContainSubstring("other-namespace"))
+	})
+
+	It("should allow infraClusterSecretRef pointing to the controller namespace", func() {
+		controllerNS := "capk-system"
+		infraClusterSecret = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      infraSecretName,
+				Namespace: controllerNS,
+			},
+			Data: map[string][]byte{
+				"kubeconfig": []byte(kubeconfig),
+			},
+		}
+		fakeClient = fake.NewClientBuilder().WithScheme(testing.SetupScheme()).WithObjects(infraClusterSecret).Build()
+
+		infraClusterSecretRef := &corev1.ObjectReference{
+			APIVersion: "v1",
+			Kind:       "Secret",
+			Name:       infraSecretName,
+			Namespace:  controllerNS,
+		}
+
+		fakeInfraClient := fake.NewClientBuilder().Build()
+		infraCluster := NewWithFactory(fakeClient, nil,
+			func(config *rest.Config, options client.Options) (client.Client, error) {
+				return fakeInfraClient, nil
+			}, controllerNS,
+		)
+		infraClient, _, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(infraClient).To(BeIdenticalTo(fakeInfraClient))
+	})
+
+	It("should allow infraClusterSecretRef with same namespace as owner", func() {
+		infraClusterSecret = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      infraSecretName,
+				Namespace: ownerNamespace,
+			},
+			Data: map[string][]byte{
+				"kubeconfig": []byte(kubeconfig),
+			},
+		}
+		fakeClient = fake.NewClientBuilder().WithScheme(testing.SetupScheme()).WithObjects(infraClusterSecret).Build()
+
+		infraClusterSecretRef := &corev1.ObjectReference{
+			APIVersion: "v1",
+			Kind:       "Secret",
+			Name:       infraSecretName,
+			Namespace:  ownerNamespace,
+		}
+
+		fakeInfraClient := fake.NewClientBuilder().Build()
+		infraCluster := NewWithFactory(fakeClient, nil,
+			func(config *rest.Config, options client.Options) (client.Client, error) {
+				return fakeInfraClient, nil
+			}, "",
+		)
+		infraClient, _, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(infraClient).To(BeIdenticalTo(fakeInfraClient))
 	})
 
 	It("should failed when the referenced infrastructure secret cannot be found", func() {
@@ -59,7 +138,7 @@ var _ = Describe("InfraCluster", func() {
 			Kind:       "Secret",
 			Name:       infraSecretName,
 		}
-		infraCluster := New(fakeClient, nil)
+		infraCluster := New(fakeClient, nil, "")
 
 		_, _, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
 		Expect(errors.IsNotFound(err)).To(BeTrue())
@@ -81,7 +160,7 @@ var _ = Describe("InfraCluster", func() {
 			Name:       infraSecretName,
 		}
 
-		infraCluster := New(fakeClient, nil)
+		infraCluster := New(fakeClient, nil, "")
 		_, _, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(Equal("failed to retrieve infra kubeconfig from secret: 'kubeconfig' key is missing"))
@@ -105,7 +184,7 @@ var _ = Describe("InfraCluster", func() {
 			Name:       infraSecretName,
 		}
 
-		infraCluster := New(fakeClient, nil)
+		infraCluster := New(fakeClient, nil, "")
 		_, _, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("failed to create K8s-API client config"))
@@ -135,7 +214,7 @@ var _ = Describe("InfraCluster", func() {
 		infraCluster := NewWithFactory(fakeClient, nil,
 			func(config *rest.Config, options client.Options) (client.Client, error) {
 				return fakeInfraClient, nil
-			},
+			}, "",
 		)
 		infraClient, namespace, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -166,7 +245,7 @@ var _ = Describe("InfraCluster", func() {
 		infraCluster := NewWithFactory(fakeClient, nil,
 			func(config *rest.Config, options client.Options) (client.Client, error) {
 				return fakeInfraClient, nil
-			},
+			}, "",
 		)
 		infraClient, namespace, err := infraCluster.GenerateInfraClusterClient(infraClusterSecretRef, ownerNamespace, nil)
 		Expect(err).NotTo(HaveOccurred())

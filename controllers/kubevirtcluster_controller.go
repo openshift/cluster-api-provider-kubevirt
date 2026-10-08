@@ -30,11 +30,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta1" //nolint SA1019
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions" //nolint SA1019
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"      //nolint SA1019
+	"sigs.k8s.io/cluster-api/util/conditions"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -70,7 +70,7 @@ func GetLoadBalancerNamespace(kc *infrav1.KubevirtCluster, infraClusterNamespace
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=kubevirtclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=kubevirtclusters/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=services;,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services;,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts;configmaps,verbs=delete;list
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=delete;list
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=delete;list
@@ -167,7 +167,12 @@ func (r *KubevirtClusterReconciler) reconcileNormal(ctx *context.ClusterContext,
 	// Create the service serving as load balancer, if not existing
 	if !externalLoadBalancer.IsFound() {
 		if err := externalLoadBalancer.Create(ctx); err != nil {
-			conditions.MarkFalse(ctx.KubevirtCluster, infrav1.LoadBalancerAvailableCondition, infrav1.LoadBalancerProvisioningFailedReason, clusterv1.ConditionSeverityWarning, "%v", err.Error())
+			conditions.Set(ctx.KubevirtCluster, metav1.Condition{
+				Type:    infrav1.LoadBalancerAvailableCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  infrav1.LoadBalancerProvisioningFailedReason,
+				Message: err.Error(),
+			})
 			return ctrl.Result{}, errors.Wrap(err, "failed to create load balancer")
 		}
 	}
@@ -182,7 +187,12 @@ func (r *KubevirtClusterReconciler) reconcileNormal(ctx *context.ClusterContext,
 	} else if ctx.KubevirtCluster.Spec.ControlPlaneServiceTemplate.Spec.Type == "LoadBalancer" {
 		lbip4, err := externalLoadBalancer.ExternalIP(ctx)
 		if err != nil {
-			conditions.MarkFalse(ctx.KubevirtCluster, infrav1.LoadBalancerAvailableCondition, infrav1.LoadBalancerProvisioningFailedReason, clusterv1.ConditionSeverityWarning, "%v", err.Error())
+			conditions.Set(ctx.KubevirtCluster, metav1.Condition{
+				Type:    infrav1.LoadBalancerAvailableCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  infrav1.LoadBalancerProvisioningFailedReason,
+				Message: err.Error(),
+			})
 			return ctrl.Result{}, errors.Wrap(err, "failed to get ExternalIP for the load balancer")
 		}
 		ctx.KubevirtCluster.Spec.ControlPlaneEndpoint = infrav1.APIEndpoint{
@@ -194,7 +204,12 @@ func (r *KubevirtClusterReconciler) reconcileNormal(ctx *context.ClusterContext,
 	} else {
 		lbip4, err := externalLoadBalancer.IP(ctx)
 		if err != nil {
-			conditions.MarkFalse(ctx.KubevirtCluster, infrav1.LoadBalancerAvailableCondition, infrav1.LoadBalancerProvisioningFailedReason, clusterv1.ConditionSeverityWarning, "%v", err.Error())
+			conditions.Set(ctx.KubevirtCluster, metav1.Condition{
+				Type:    infrav1.LoadBalancerAvailableCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  infrav1.LoadBalancerProvisioningFailedReason,
+				Message: err.Error(),
+			})
 			return ctrl.Result{}, errors.Wrap(err, "failed to get ClusterIP for the load balancer")
 		}
 		ctx.KubevirtCluster.Spec.ControlPlaneEndpoint = infrav1.APIEndpoint{
@@ -203,7 +218,11 @@ func (r *KubevirtClusterReconciler) reconcileNormal(ctx *context.ClusterContext,
 		}
 	}
 
-	conditions.MarkTrue(ctx.KubevirtCluster, infrav1.LoadBalancerAvailableCondition)
+	conditions.Set(ctx.KubevirtCluster, metav1.Condition{
+		Type:   infrav1.LoadBalancerAvailableCondition,
+		Status: metav1.ConditionTrue,
+		Reason: "LoadBalancerAvailable",
+	})
 
 	// Generate ssh keys for cluster nodes, and persist them to a secret
 	clusterNodeSSHKeys := ssh.NewClusterNodeSshKeys(ctx, r.Client)
@@ -229,6 +248,11 @@ func (r *KubevirtClusterReconciler) reconcileNormal(ctx *context.ClusterContext,
 
 	// Mark the KubevirtCluster ready
 	ctx.KubevirtCluster.Status.Ready = true
+	if ctx.KubevirtCluster.Status.Initialization == nil {
+		ctx.KubevirtCluster.Status.Initialization = &infrav1.KubevirtClusterInitializationStatus{}
+	}
+	provisioned := true
+	ctx.KubevirtCluster.Status.Initialization.Provisioned = &provisioned
 
 	return ctrl.Result{}, nil
 }
@@ -245,7 +269,11 @@ func (r *KubevirtClusterReconciler) reconcileDelete(ctx *context.ClusterContext,
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	conditions.MarkFalse(ctx.KubevirtCluster, infrav1.LoadBalancerAvailableCondition, clusterv1.DeletingReason, clusterv1.ConditionSeverityInfo, "")
+	conditions.Set(ctx.KubevirtCluster, metav1.Condition{
+		Type:   infrav1.LoadBalancerAvailableCondition,
+		Status: metav1.ConditionFalse,
+		Reason: clusterv1.DeletingReason,
+	})
 	if err := ctx.PatchKubevirtCluster(patchHelper); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to patch KubevirtCluster")
 	}

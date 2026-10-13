@@ -36,16 +36,23 @@ const (
 	immutableWarning      = "KubevirtMachineTemplateSpec is immutable"
 )
 
-func SetupWebhookWithManager(mgr ctrl.Manager) error {
+func SetupWebhookWithManager(mgr ctrl.Manager, controllerNamespace string) error {
 	decoder := admission.NewDecoder(mgr.GetScheme())
 
 	whHandler := &kubevirtMachineTemplateHandler{
 		decoder: decoder,
 	}
 
+	infraRefValidator := &infraSecretRefValidator{
+		decoder:             decoder,
+		controllerNamespace: controllerNamespace,
+	}
+
 	srv := mgr.GetWebhookServer()
 
 	srv.Register(webhookValidationPath, &webhook.Admission{Handler: whHandler})
+	srv.Register(kubevirtClusterValidationPath, &webhook.Admission{Handler: admission.HandlerFunc(infraRefValidator.HandleCluster)})
+	srv.Register(kubevirtMachineValidationPath, &webhook.Admission{Handler: admission.HandlerFunc(infraRefValidator.HandleMachine)})
 
 	return nil
 }

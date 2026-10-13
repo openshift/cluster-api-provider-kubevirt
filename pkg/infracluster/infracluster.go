@@ -20,23 +20,25 @@ type InfraCluster interface {
 type ClientFactoryFunc func(config *rest.Config, options k8sclient.Options) (k8sclient.Client, error)
 
 // New creates new InfraCluster instance
-func New(client k8sclient.Client, noCachedClient k8sclient.Client) InfraCluster {
-	return NewWithFactory(client, noCachedClient, k8sclient.New)
+func New(client k8sclient.Client, noCachedClient k8sclient.Client, controllerNamespace string) InfraCluster {
+	return NewWithFactory(client, noCachedClient, k8sclient.New, controllerNamespace)
 }
 
 // NewWithFactory creates new InfraCluster instance that uses the provided client factory function.
-func NewWithFactory(client k8sclient.Client, noCachedClient k8sclient.Client, factory ClientFactoryFunc) InfraCluster {
+func NewWithFactory(client k8sclient.Client, noCachedClient k8sclient.Client, factory ClientFactoryFunc, controllerNamespace string) InfraCluster {
 	return &infraCluster{
-		Client:         client,
-		NoCachedClient: noCachedClient,
-		ClientFactory:  factory,
+		Client:              client,
+		NoCachedClient:      noCachedClient,
+		ClientFactory:       factory,
+		ControllerNamespace: controllerNamespace,
 	}
 }
 
 type infraCluster struct {
 	k8sclient.Client
-	NoCachedClient k8sclient.Client
-	ClientFactory  ClientFactoryFunc
+	NoCachedClient      k8sclient.Client
+	ClientFactory       ClientFactoryFunc
+	ControllerNamespace string
 }
 
 // GenerateInfraClusterClient creates a client for infra cluster.
@@ -45,11 +47,17 @@ func (w *infraCluster) GenerateInfraClusterClient(infraClusterSecretRef *corev1.
 		return w.NoCachedClient, ownerNamespace, nil
 	}
 
-	infraKubeconfigSecret := &corev1.Secret{}
 	secretNamespace := infraClusterSecretRef.Namespace
 	if secretNamespace == "" {
 		secretNamespace = ownerNamespace
+	} else if secretNamespace != ownerNamespace &&
+		(w.ControllerNamespace == "" || secretNamespace != w.ControllerNamespace) {
+		return nil, "", errors.Errorf(
+			"infraClusterSecretRef.namespace must match the owning resource namespace (%s) or the controller namespace; got %s",
+			ownerNamespace, secretNamespace)
 	}
+
+	infraKubeconfigSecret := &corev1.Secret{}
 	infraKubeconfigSecretKey := k8sclient.ObjectKey{Namespace: secretNamespace, Name: infraClusterSecretRef.Name}
 	if err := w.Get(context, infraKubeconfigSecretKey, infraKubeconfigSecret); err != nil {
 		return nil, "", errors.Wrapf(err, "failed to fetch infra kubeconfig secret %s/%s", infraClusterSecretRef.Namespace, infraClusterSecretRef.Name)
@@ -79,10 +87,18 @@ func (w *infraCluster) GenerateInfraClusterClient(infraClusterSecretRef *corev1.
 		return nil, "", errors.Wrap(err, "failed to create REST config")
 	}
 
+	RestConfigHardening(restConfig)
+
 	infraClusterClient, err := w.ClientFactory(restConfig, k8sclient.Options{Scheme: w.Scheme()})
 	if err != nil {
 		return nil, "", errors.Wrap(err, "failed to create infra cluster client")
 	}
 
 	return infraClusterClient, namespace, nil
+}
+
+func RestConfigHardening(restConfig *rest.Config) {
+	// limit the usage of this configuration: do not allow user to execute commands using this client.
+	restConfig.ExecProvider = nil
+	restConfig.AuthProvider = nil
 }

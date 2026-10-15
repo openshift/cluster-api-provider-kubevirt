@@ -108,8 +108,8 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.5.0 // indirect
 )
 
-// fix CVE-2026-39829 (and CVE-2024-45337, CVE-2026-39832)
-replace golang.org/x/crypto => github.com/openshift-sustaining/crypto v0.41.0-sec.4
+// fix CVE-2026-39829, CVE-2026-39830 (and CVE-2024-45337, CVE-2026-39832)
+replace golang.org/x/crypto => github.com/openshift-sustaining/crypto v0.41.0-sec.5
 
 // fix CVE-2026-25681
 replace golang.org/x/net => github.com/openshift-sustaining/net v0.43.0-sec.4

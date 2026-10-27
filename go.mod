@@ -1,6 +1,6 @@
 module sigs.k8s.io/cluster-api-provider-kubevirt
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/go-logr/logr v1.4.3
@@ -101,7 +101,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.4 // indirect
-	github.com/prometheus/procfs v0.19.2 // indirect
+	github.com/prometheus/procfs v0.23.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/stoewer/go-strcase v1.3.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
@@ -122,8 +122,8 @@ require (
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.14.0 // indirect

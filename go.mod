@@ -1,6 +1,6 @@
 module sigs.k8s.io/cluster-api-provider-kubevirt
 
-go 1.25.3
+go 1.26
 
 require (
 	github.com/go-logr/logr v1.4.3
@@ -19,7 +19,7 @@ require (
 	k8s.io/component-base v0.35.3
 	k8s.io/klog/v2 v2.140.0
 	k8s.io/kubectl v0.35.3
-	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
+	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab
 	kubevirt.io/api v1.8.0
 	kubevirt.io/containerized-data-importer-api v1.64.0
 	sigs.k8s.io/cluster-api v1.12.4

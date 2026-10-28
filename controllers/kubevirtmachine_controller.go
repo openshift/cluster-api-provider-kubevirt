@@ -45,6 +45,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-kubevirt/api/v1alpha1"
+	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/annotationfilter"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/capiv1beta1"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/infracluster"
@@ -56,9 +57,10 @@ import (
 // KubevirtMachineReconciler reconciles a KubevirtMachine object.
 type KubevirtMachineReconciler struct {
 	client.Client
-	InfraCluster    infracluster.InfraCluster
-	WorkloadCluster workloadcluster.WorkloadCluster
-	MachineFactory  kubevirt.MachineFactory
+	InfraCluster        infracluster.InfraCluster
+	WorkloadCluster     workloadcluster.WorkloadCluster
+	MachineFactory      kubevirt.MachineFactory
+	ExcludedAnnotations annotationfilter.Filter
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=kubevirtmachines,verbs=get;list;watch;create;update;patch;delete
@@ -82,6 +84,10 @@ func (r *KubevirtMachineReconciler) Reconcile(goctx gocontext.Context, req ctrl.
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+	if r.ExcludedAnnotations.Excludes(kubevirtMachine) {
+		log.Info("Skipping KubevirtMachine with excluded annotation")
+		return ctrl.Result{}, nil
 	}
 
 	// Fetch the Machine.
@@ -268,7 +274,7 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 	}
 
 	// Create a helper for managing the KubeVirt VM hosting the machine.
-	externalMachine, err := r.MachineFactory.NewMachine(ctx, infraClusterClient, vmNamespace, clusterNodeSshKeys)
+	externalMachine, err := r.MachineFactory.NewMachine(ctx, infraClusterClient, r.Client, vmNamespace, clusterNodeSshKeys)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create helper for managing the externalMachine")
 	}
@@ -544,7 +550,7 @@ func (r *KubevirtMachineReconciler) reconcileDelete(ctx *context.MachineContext)
 	}
 
 	ctx.Logger.Info("Deleting VM...")
-	externalMachine, err := kubevirt.NewMachine(ctx, infraClusterClient, vmNamespace, nil)
+	externalMachine, err := kubevirt.NewMachine(ctx, infraClusterClient, r.Client, vmNamespace, nil)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, errors.Wrap(err, "failed to create helper for externalMachine access")
 	}
@@ -581,7 +587,7 @@ func (r *KubevirtMachineReconciler) SetupWithManager(goctx gocontext.Context, mg
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	controllerBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&infrav1.KubevirtMachine{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPaused(r.Scheme(), ctrl.LoggerFrom(goctx))).
@@ -597,8 +603,13 @@ func (r *KubevirtMachineReconciler) SetupWithManager(goctx gocontext.Context, mg
 			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(clusterToKubevirtMachines),
 			builder.WithPredicates(predicates.ClusterPausedTransitionsOrInfrastructureProvisioned(r.Scheme(), ctrl.LoggerFrom(goctx))),
-		).
-		Complete(r)
+		)
+
+	if !r.ExcludedAnnotations.IsEmpty() {
+		controllerBuilder = controllerBuilder.WithEventFilter(r.ExcludedAnnotations.Predicate())
+	}
+
+	return controllerBuilder.Complete(r)
 }
 
 // KubevirtClusterToKubevirtMachines is a handler.ToRequestsFunc to be used to enqueue

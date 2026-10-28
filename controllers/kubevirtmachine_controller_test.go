@@ -46,6 +46,7 @@ import (
 	machinemocks "sigs.k8s.io/cluster-api-provider-kubevirt/pkg/kubevirt/mock"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-kubevirt/api/v1alpha1"
+	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/annotationfilter"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/context"
 	infraclustermock "sigs.k8s.io/cluster-api-provider-kubevirt/pkg/infracluster/mock"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/testing"
@@ -139,6 +140,46 @@ var _ = Describe("KubevirtClusterToKubevirtMachines", func() {
 		if err := recover(); err != nil {
 			Expect(kubevirtMachineReconciler.KubevirtClusterToKubevirtMachines(ctx, cluster)).To(Panic())
 		}
+	})
+})
+
+var _ = Describe("KubevirtMachine reconciliation with excluded annotations", func() {
+	It("should not delete a VM or remove a finalizer", func(ctx gocontext.Context) {
+		kubevirtMachine := testing.NewKubevirtMachine("excluded-machine", "excluded-owner-machine")
+		kubevirtMachine.Annotations = map[string]string{
+			"example.com/exclude": "true",
+		}
+		controllerutil.AddFinalizer(kubevirtMachine, infrav1.MachineFinalizer)
+
+		virtualMachine := &kubevirtv1.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: kubevirtMachine.Namespace,
+				Name:      kubevirtMachine.Name,
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(testing.SetupScheme()).
+			WithObjects(kubevirtMachine, virtualMachine).
+			Build()
+		reconciler := KubevirtMachineReconciler{
+			Client:              fakeClient,
+			ExcludedAnnotations: annotationfilter.New([]string{"example.com/exclude"}),
+		}
+
+		result, err := reconciler.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: kubevirtMachine.Namespace,
+				Name:      kubevirtMachine.Name,
+			},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(ctrl.Result{}))
+		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(virtualMachine), virtualMachine)).To(Succeed())
+
+		updatedMachine := &infrav1.KubevirtMachine{}
+		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(kubevirtMachine), updatedMachine)).To(Succeed())
+		Expect(updatedMachine.Finalizers).To(ContainElement(infrav1.MachineFinalizer))
 	})
 })
 
@@ -411,7 +452,7 @@ var _ = Describe("reconcile a kubevirt machine", func() {
 		machineMock.EXPECT().GenerateProviderID().Return("abc", nil).AnyTimes()
 		machineMock.EXPECT().GenerateProviderID().Return("abc", nil).AnyTimes()
 		machineMock.EXPECT().DrainNodeIfNeeded(gomock.Any()).Return(time.Duration(0), nil).AnyTimes()
-		machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
+		machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
 
 		infraClusterMock.EXPECT().GenerateInfraClusterClient(kubevirtMachine.Spec.InfraClusterSecretRef, kubevirtMachine.Namespace, machineContext.Context).Return(fakeClient, kubevirtMachine.Namespace, nil).Times(3)
 
@@ -1026,7 +1067,7 @@ var _ = Describe("reconcile a kubevirt machine", func() {
 				machineMock.EXPECT().Addresses().Return([]string{"1.1.1.1"}).Times(1)
 				machineMock.EXPECT().IsLiveMigratable().Return(false, "", "", nil).Times(1)
 
-				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
+				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
 
 				infraClusterMock.EXPECT().GenerateInfraClusterClient(kubevirtMachine.Spec.InfraClusterSecretRef, kubevirtMachine.Namespace, machineContext.Context).Return(fakeClient, kubevirtMachine.Namespace, nil)
 
@@ -1078,7 +1119,7 @@ var _ = Describe("reconcile a kubevirt machine", func() {
 				machineMock.EXPECT().IsBootstrapped().Return(false)
 				machineMock.EXPECT().DrainNodeIfNeeded(gomock.Any()).Return(time.Duration(0), nil)
 
-				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
+				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
 
 				setupClient(machineFactoryMock, objects)
 
@@ -1130,7 +1171,7 @@ var _ = Describe("reconcile a kubevirt machine", func() {
 				machineMock.EXPECT().Addresses().Return([]string{"1.1.1.1"}).Times(1)
 				machineMock.EXPECT().IsLiveMigratable().Return(false, "", "", nil).Times(1)
 
-				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
+				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
 
 				setupClient(machineFactoryMock, objects)
 
@@ -1187,7 +1228,7 @@ var _ = Describe("reconcile a kubevirt machine", func() {
 				machineMock.EXPECT().Addresses().Return([]string{"1.1.1.1"}).Times(1)
 				machineMock.EXPECT().IsLiveMigratable().Return(true, "", "", nil).Times(1)
 
-				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
+				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
 
 				setupClient(machineFactoryMock, objects)
 
@@ -1237,7 +1278,7 @@ var _ = Describe("reconcile a kubevirt machine", func() {
 				machineMock.EXPECT().Address().Return("1.1.1.1").Times(1)
 				machineMock.EXPECT().DrainNodeIfNeeded(gomock.Any()).Return(time.Second*requeueDurationSeconds, nil).Times(1)
 
-				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
+				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
 
 				setupClient(machineFactoryMock, objects)
 
@@ -1282,7 +1323,7 @@ var _ = Describe("reconcile a kubevirt machine", func() {
 				machineMock.EXPECT().Address().Return("1.1.1.1").Times(1)
 				machineMock.EXPECT().DrainNodeIfNeeded(gomock.Any()).Return(time.Second*requeueDurationSeconds, fmt.Errorf("mock error")).Times(1)
 
-				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
+				machineFactoryMock.EXPECT().NewMachine(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(machineMock, nil).Times(1)
 
 				setupClient(machineFactoryMock, objects)
 

@@ -59,6 +59,8 @@ func (c *MachineContext) String() string {
 
 // PatchKubevirtMachine patches the KubevirtMachine object and status.
 func (c *MachineContext) PatchKubevirtMachine(patchHelper *patch.Helper) error {
+	ensureNonEmptyConditionMessages(c.KubevirtMachine)
+
 	// Always update the readyCondition by summarizing the state of other conditions.
 	// A step counter is added to represent progress during the provisioning process (instead we are hiding the step counter during the deletion process).
 	conditions.SetSummary(c.KubevirtMachine,
@@ -67,6 +69,8 @@ func (c *MachineContext) PatchKubevirtMachine(patchHelper *patch.Helper) error {
 			infrav1.BootstrapExecSucceededCondition,
 		),
 	)
+
+	ensureNonEmptyConditionMessages(c.KubevirtMachine)
 
 	// Patch the object, ignoring conflicts on the conditions owned by this controller.
 	return patchHelper.Patch(
@@ -78,6 +82,18 @@ func (c *MachineContext) PatchKubevirtMachine(patchHelper *patch.Helper) error {
 			infrav1.BootstrapExecSucceededCondition,
 		}},
 	)
+}
+
+func ensureNonEmptyConditionMessages(machine *infrav1.KubevirtMachine) {
+	for i := range machine.Status.Conditions {
+		condition := &machine.Status.Conditions[i]
+		if condition.Reason == "" {
+			condition.Reason = "NoReason"
+		}
+		if condition.Message == "" {
+			condition.Message = condition.Reason
+		}
+	}
 }
 
 func (c *MachineContext) HasInjectedCapkSSHKeys(sshPublicKey []byte) bool {

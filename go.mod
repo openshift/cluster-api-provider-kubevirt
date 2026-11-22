@@ -19,7 +19,7 @@ require (
 	k8s.io/klog/v2 v2.120.1
 	k8s.io/kubectl v0.30.1
 	k8s.io/utils v0.0.0-20240502163921-fe8a2dddb1d0
-	kubevirt.io/api v1.2.1
+	kubevirt.io/api v1.10.0
 	kubevirt.io/containerized-data-importer-api v1.59.0
 	sigs.k8s.io/cluster-api v1.7.2
 	sigs.k8s.io/controller-runtime v0.18.3

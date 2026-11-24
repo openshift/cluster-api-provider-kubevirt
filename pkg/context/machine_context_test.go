@@ -17,11 +17,19 @@ limitations under the License.
 package context
 
 import (
+	gocontext "context"
 	"testing"
 
+	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-kubevirt/api/v1alpha1"
+	capktesting "sigs.k8s.io/cluster-api-provider-kubevirt/pkg/testing"
 )
 
 func TestEnsureNonEmptyConditionMessages(t *testing.T) {
@@ -31,6 +39,7 @@ func TestEnsureNonEmptyConditionMessages(t *testing.T) {
 				{Type: "Ready", Reason: "Ready", Message: "already set"},
 				{Type: "VMProvisioned", Reason: "VMProvisioned"},
 				{Type: "BootstrapExecSucceeded"},
+				{Type: "example.com/Healthy", Reason: "Healthy"},
 			},
 		},
 	}
@@ -46,5 +55,78 @@ func TestEnsureNonEmptyConditionMessages(t *testing.T) {
 	}
 	if conditions[2].Reason == "" || conditions[2].Message == "" {
 		t.Fatalf("missing reason and message were not defaulted: %#v", conditions[2])
+	}
+	if conditions[3].Message != "" {
+		t.Fatalf("unowned condition message was changed: %q", conditions[3].Message)
+	}
+}
+
+func TestPatchKubevirtMachinePreservesUnownedConditions(t *testing.T) {
+	ctx := gocontext.Background()
+	machine := capktesting.NewKubevirtMachine("kubevirt-machine", "machine")
+	machine.Namespace = "default"
+	machine.Status.Conditions = []clusterv1.Condition{
+		{
+			Type:               "example.com/Healthy",
+			Status:             corev1.ConditionTrue,
+			Reason:             "Healthy",
+			Message:            "",
+			LastTransitionTime: metav1.Now(),
+		},
+		{
+			Type:               infrav1.VMProvisionedCondition,
+			Status:             corev1.ConditionFalse,
+			Reason:             "Waiting",
+			Message:            "",
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+
+	fakeClient := ctrlfake.NewClientBuilder().
+		WithScheme(capktesting.SetupScheme()).
+		WithObjects(machine).
+		WithStatusSubresource(machine).
+		Build()
+	if err := fakeClient.Status().Update(ctx, machine); err != nil {
+		t.Fatalf("failed to update initial status: %v", err)
+	}
+
+	patchHelper, err := patch.NewHelper(machine, fakeClient)
+	if err != nil {
+		t.Fatalf("failed to create patch helper: %v", err)
+	}
+
+	machineContext := &MachineContext{
+		Context:         ctx,
+		KubevirtMachine: machine,
+		Logger:          logr.Discard(),
+	}
+	if err := machineContext.PatchKubevirtMachine(patchHelper); err != nil {
+		t.Fatalf("failed to patch KubevirtMachine: %v", err)
+	}
+
+	updated := &infrav1.KubevirtMachine{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(machine), updated); err != nil {
+		t.Fatalf("failed to get updated KubevirtMachine: %v", err)
+	}
+
+	var unowned, owned *clusterv1.Condition
+	for i := range updated.Status.Conditions {
+		condition := &updated.Status.Conditions[i]
+		switch condition.Type {
+		case "example.com/Healthy":
+			unowned = condition
+		case infrav1.VMProvisionedCondition:
+			owned = condition
+		}
+	}
+	if unowned == nil || owned == nil {
+		t.Fatalf("expected conditions were not found: %#v", updated.Status.Conditions)
+	}
+	if unowned.Message != "" {
+		t.Fatalf("unowned condition message was changed: %q", unowned.Message)
+	}
+	if owned.Message == "" {
+		t.Fatalf("owned condition message was not defaulted: %q", owned.Message)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -30,6 +31,12 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-kubevirt/api/v1alpha1"
 )
+
+var machineOwnedConditions = []clusterv1.ConditionType{
+	clusterv1.ReadyCondition,
+	infrav1.VMProvisionedCondition,
+	infrav1.BootstrapExecSucceededCondition,
+}
 
 // MachineContext is a Go context used with a KubeVirt machine.
 type MachineContext struct {
@@ -59,6 +66,8 @@ func (c *MachineContext) String() string {
 
 // PatchKubevirtMachine patches the KubevirtMachine object and status.
 func (c *MachineContext) PatchKubevirtMachine(patchHelper *patch.Helper) error {
+	ensureNonEmptyConditionMessages(c.KubevirtMachine)
+
 	// Always update the readyCondition by summarizing the state of other conditions.
 	// A step counter is added to represent progress during the provisioning process (instead we are hiding the step counter during the deletion process).
 	conditions.SetSummary(c.KubevirtMachine,
@@ -68,16 +77,33 @@ func (c *MachineContext) PatchKubevirtMachine(patchHelper *patch.Helper) error {
 		),
 	)
 
+	ensureNonEmptyConditionMessages(c.KubevirtMachine)
+
 	// Patch the object, ignoring conflicts on the conditions owned by this controller.
 	return patchHelper.Patch(
 		c.Context,
 		c.KubevirtMachine,
-		patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
-			clusterv1.ReadyCondition,
-			infrav1.VMProvisionedCondition,
-			infrav1.BootstrapExecSucceededCondition,
-		}},
+		patch.WithOwnedConditions{Conditions: machineOwnedConditions},
 	)
+}
+
+func ensureNonEmptyConditionMessages(machine *infrav1.KubevirtMachine) {
+	for i := range machine.Status.Conditions {
+		condition := &machine.Status.Conditions[i]
+		if !isMachineOwnedCondition(condition.Type) {
+			continue
+		}
+		if condition.Reason == "" {
+			condition.Reason = "NoReason"
+		}
+		if condition.Message == "" {
+			condition.Message = condition.Reason
+		}
+	}
+}
+
+func isMachineOwnedCondition(conditionType clusterv1.ConditionType) bool {
+	return slices.Contains(machineOwnedConditions, conditionType)
 }
 
 func (c *MachineContext) HasInjectedCapkSSHKeys(sshPublicKey []byte) bool {

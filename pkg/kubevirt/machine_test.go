@@ -101,7 +101,7 @@ var _ = Describe("Without KubeVirt VM running", func() {
 	It("NewMachine should have client and machineContext set, but vmiInstance equal nil", func() {
 		externalMachine, err := defaultTestMachine(machineContext, namespace, fakeClient, fakeVMCommandExecutor, []byte{})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(externalMachine.client).To(Equal(fakeClient))
+		Expect(externalMachine.infraClient).To(Equal(fakeClient))
 		Expect(externalMachine.machineContext).To(Equal(machineContext))
 		Expect(externalMachine.vmiInstance).To(BeNil())
 	})
@@ -251,7 +251,7 @@ var _ = Describe("With KubeVirt VM running", func() {
 	It("NewMachine should have all client, machineContext and vmiInstance NOT nil", func() {
 		externalMachine, err := defaultTestMachine(machineContext, namespace, fakeClient, fakeVMCommandExecutor, []byte(sshKey))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(externalMachine.client).ToNot(BeNil())
+		Expect(externalMachine.infraClient).ToNot(BeNil())
 		Expect(externalMachine.machineContext).To(Equal(machineContext))
 		Expect(externalMachine.vmiInstance).ToNot(BeNil())
 	})
@@ -606,6 +606,7 @@ var _ = Describe("With KubeVirt VM running", func() {
 
 		Context("migration-first eviction for migratable VMIs", func() {
 			BeforeEach(func() {
+				kubevirtMachine.Annotations = map[string]string{}
 				virtualMachineInstance.Status.NodeName = hostNodeName
 				virtualMachineInstance.Status.Conditions = append(
 					virtualMachineInstance.Status.Conditions,
@@ -639,9 +640,8 @@ var _ = Describe("With KubeVirt VM running", func() {
 					Expect(migrationList.Items).To(HaveLen(1))
 					Expect(migrationList.Items[0].Spec.VMIName).To(Equal(virtualMachineInstance.Name))
 
-					By("Migration should have SystemCritical priority")
-					Expect(migrationList.Items[0].Spec.Priority).ToNot(BeNil())
-					Expect(*migrationList.Items[0].Spec.Priority).To(Equal(kubevirtv1.PrioritySystemCritical))
+					By("Migration should not set a priority restricted to virt-controller")
+					Expect(migrationList.Items[0].Spec.Priority).To(BeNil())
 
 					By("Migration-submitted annotation should be set, but NOT the grace period timer")
 					updatedKM := &v1alpha1.KubevirtMachine{}
@@ -801,6 +801,38 @@ var _ = Describe("With KubeVirt VM running", func() {
 			})
 
 			When("migration creation fails", func() {
+				It("Should preserve the drain grace deadline across failed creates", func() {
+					externalMachine, err := defaultTestMachine(machineContext, namespace, fakeClient, fakeVMCommandExecutor, []byte(sshKey))
+					Expect(err).NotTo(HaveOccurred())
+
+					origClient := externalMachine.infraClient
+					externalMachine.infraClient = &migrationFailClient{Client: origClient}
+
+					migration, err := externalMachine.tryMigrateVMI()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(migration.migrated).To(BeFalse())
+					Expect(migration.requeueAfter).To(BeZero())
+					Expect(migration.resetGracePeriod).To(BeFalse())
+
+					Expect(externalMachine.drainGracePeriodExceeded()).To(BeFalse())
+					updatedKM := &v1alpha1.KubevirtMachine{}
+					err = fakeClient.Get(gocontext.Background(), client.ObjectKeyFromObject(kubevirtMachine), updatedKM)
+					Expect(err).NotTo(HaveOccurred())
+					graceTime := updatedKM.Annotations[v1alpha1.VmiDeletionGraceTime]
+					Expect(graceTime).NotTo(BeEmpty())
+
+					migration, err = externalMachine.tryMigrateVMI()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(migration.migrated).To(BeFalse())
+					Expect(migration.requeueAfter).To(BeZero())
+					Expect(migration.resetGracePeriod).To(BeFalse())
+
+					updatedKM = &v1alpha1.KubevirtMachine{}
+					err = fakeClient.Get(gocontext.Background(), client.ObjectKeyFromObject(kubevirtMachine), updatedKM)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(updatedKM.Annotations[v1alpha1.VmiDeletionGraceTime]).To(Equal(graceTime))
+				})
+
 				It("Should fall through to drain+delete gracefully", func() {
 					node := &corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
@@ -815,8 +847,8 @@ var _ = Describe("With KubeVirt VM running", func() {
 					Expect(err).NotTo(HaveOccurred())
 
 					By("Inject a create failure for migrations")
-					origClient := externalMachine.client
-					externalMachine.client = &migrationFailClient{Client: origClient}
+					origClient := externalMachine.infraClient
+					externalMachine.infraClient = &migrationFailClient{Client: origClient}
 
 					requeueDuration, err := externalMachine.DrainNodeIfNeeded(wlCluster)
 					Expect(err).NotTo(HaveOccurred())
@@ -827,6 +859,51 @@ var _ = Describe("With KubeVirt VM running", func() {
 					err = origClient.Get(gocontext.Background(), client.ObjectKey{Namespace: virtualMachineInstance.Namespace, Name: virtualMachineInstance.Name}, vmi)
 					Expect(err).To(HaveOccurred())
 					Expect(apierrors.IsNotFound(err)).To(BeTrue())
+				})
+
+				It("Should stay on the drain path after fallback begins", func() {
+					node := &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: kubevirtMachineName,
+						},
+					}
+					Expect(k8sfake.AddToScheme(setupRemoteScheme())).ToNot(HaveOccurred())
+					cl := k8sfake.NewClientset(node)
+					fakeErr := errors.New("fake error: can't list pods")
+					cl.PrependReactor("list", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+						return true, nil, fakeErr
+					})
+					wlCluster.EXPECT().GenerateWorkloadClusterK8sClient(gomock.Any()).Return(cl, nil).Times(2)
+
+					externalMachine, err := defaultTestMachine(machineContext, namespace, fakeClient, fakeVMCommandExecutor, []byte(sshKey))
+					Expect(err).NotTo(HaveOccurred())
+					externalMachine.infraClient = &migrationFailClient{Client: fakeClient}
+
+					requeueDuration, err := externalMachine.DrainNodeIfNeeded(wlCluster)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(requeueDuration).To(Equal(time.Second))
+
+					updatedKM := &v1alpha1.KubevirtMachine{}
+					err = fakeClient.Get(gocontext.Background(), client.ObjectKeyFromObject(kubevirtMachine), updatedKM)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(updatedKM.Annotations).To(HaveKey(v1alpha1.NodeCordonedByCapk))
+
+					machineContext.KubevirtMachine = updatedKM
+					externalMachine, err = defaultTestMachine(machineContext, namespace, fakeClient, fakeVMCommandExecutor, []byte(sshKey))
+					Expect(err).NotTo(HaveOccurred())
+
+					requeueDuration, err = externalMachine.DrainNodeIfNeeded(wlCluster)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(requeueDuration).To(Equal(time.Second))
+
+					migrationList := &kubevirtv1.VirtualMachineInstanceMigrationList{}
+					err = fakeClient.List(gocontext.Background(), migrationList, client.InNamespace(virtualMachineInstance.Namespace))
+					Expect(err).ToNot(HaveOccurred())
+					Expect(migrationList.Items).To(BeEmpty())
+
+					vmi := &kubevirtv1.VirtualMachineInstance{}
+					err = fakeClient.Get(gocontext.Background(), client.ObjectKey{Namespace: virtualMachineInstance.Namespace, Name: virtualMachineInstance.Name}, vmi)
+					Expect(err).ToNot(HaveOccurred())
 				})
 			})
 		})
@@ -1162,7 +1239,7 @@ var _ = Describe("With KubeVirt VM running externally", func() {
 	It("NewMachine should have all client, machineContext and vmiInstance NOT nil", func() {
 		externalMachine, err := defaultTestMachine(machineContext, namespace, fakeClient, fakeVMCommandExecutor, []byte(sshKey))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(externalMachine.client).ToNot(BeNil())
+		Expect(externalMachine.infraClient).ToNot(BeNil())
 		Expect(externalMachine.machineContext).To(Equal(machineContext))
 		Expect(externalMachine.vmiInstance).ToNot(BeNil())
 	})
@@ -1347,7 +1424,7 @@ var _ = Describe("with dataVolumes", func() {
 	It("NewMachine should have all client, machineContext and vmiInstance NOT nil", func() {
 		externalMachine, err := defaultTestMachine(machineContext, namespace, fakeClient, fakeVMCommandExecutor, []byte(sshKey))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(externalMachine.client).ToNot(BeNil())
+		Expect(externalMachine.infraClient).ToNot(BeNil())
 		Expect(externalMachine.machineContext).To(Equal(machineContext))
 		Expect(externalMachine.vmiInstance).ToNot(BeNil())
 		Expect(externalMachine.dataVolumes).To(HaveLen(1))
@@ -1518,7 +1595,7 @@ func (e FakeVMCommandExecutor) ExecuteCommand(command string) (string, error) {
 
 func defaultTestMachine(ctx *context.MachineContext, namespace string, client client.Client, vmExecutor FakeVMCommandExecutor, sshPubKey []byte) (*Machine, error) {
 
-	machine, err := NewMachine(ctx, client, namespace, &ssh.ClusterNodeSshKeys{PublicKey: sshPubKey})
+	machine, err := NewMachine(ctx, client, client, namespace, &ssh.ClusterNodeSshKeys{PublicKey: sshPubKey})
 	if err != nil {
 		return nil, err
 	}
@@ -1554,4 +1631,126 @@ func (c *migrationFailClient) Create(ctx gocontext.Context, obj client.Object, o
 		return fmt.Errorf("fake error: can't create migration")
 	}
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+func infraOnlyScheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	for _, f := range []func(*runtime.Scheme) error{
+		kubevirtv1.AddToScheme,
+		cdiv1.AddToScheme,
+		corev1.AddToScheme,
+	} {
+		if err := f(s); err != nil {
+			panic(err)
+		}
+	}
+	return s
+}
+
+var _ = Describe("With the infra cluster separate from the management cluster", func() {
+	const (
+		hostNodeName   = "host-node-1"
+		mgmtNamespace  = "capi-system"
+		infraNamespace = "tenant-vms"
+	)
+
+	var (
+		machineContext  *context.MachineContext
+		infraClient     client.Client
+		mgmtClient      client.Client
+		wlCluster       *mock.MockWorkloadCluster
+		kvMachine       *v1alpha1.KubevirtMachine
+		vmi             *kubevirtv1.VirtualMachineInstance
+		guestNodeClient *k8sfake.Clientset
+	)
+
+	BeforeEach(func() {
+		kvMachine = testing.NewKubevirtMachine(kubevirtMachineName, machineName)
+		kvMachine.Namespace = mgmtNamespace
+		kvMachine.Annotations = map[string]string{}
+		kvMachine.Spec.BootstrapCheckSpec = v1alpha1.VirtualMachineBootstrapCheckSpec{}
+
+		capiMachine := testing.NewMachine(clusterName, machineName, kvMachine)
+		capiMachine.Namespace = mgmtNamespace
+
+		vmi = testing.NewVirtualMachineInstance(kvMachine)
+		vmi.Namespace = infraNamespace
+		evictionStrategy := kubevirtv1.EvictionStrategyExternal
+		vmi.Spec.EvictionStrategy = &evictionStrategy
+		vmi.Status.EvacuationNodeName = hostNodeName
+		vmi.Status.Conditions = []kubevirtv1.VirtualMachineInstanceCondition{
+			{Type: kubevirtv1.VirtualMachineInstanceReady, Status: corev1.ConditionTrue},
+		}
+
+		By("the infra cluster holds only the VM and the VMI")
+		infraClient = fake.NewClientBuilder().
+			WithScheme(infraOnlyScheme()).
+			WithObjects(vmi, testing.NewVirtualMachine(vmi)).
+			Build()
+
+		By("the management cluster holds only the CAPI and CAPK objects")
+		mgmtClient = fake.NewClientBuilder().
+			WithScheme(testing.SetupScheme()).
+			WithObjects(cluster, kubevirtCluster, capiMachine, kvMachine).
+			Build()
+
+		machineContext = &context.MachineContext{
+			Context:         gocontext.TODO(),
+			Cluster:         cluster,
+			KubevirtCluster: kubevirtCluster,
+			Machine:         capiMachine,
+			KubevirtMachine: kvMachine,
+			Logger:          logger,
+		}
+
+		guestNodeClient = k8sfake.NewClientset(&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: kubevirtMachineName},
+		})
+
+		wlCluster = mock.NewMockWorkloadCluster(gomock.NewController(GinkgoT()))
+		wlCluster.EXPECT().GenerateWorkloadClusterK8sClient(gomock.Any()).Return(guestNodeClient, nil).AnyTimes()
+	})
+
+	It("should annotate the KubevirtMachine on the management cluster", func() {
+		externalMachine, err := splitTestMachine(machineContext, infraNamespace, infraClient, mgmtClient)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(externalMachine.vmiInstance).NotTo(BeNil())
+
+		_, err = externalMachine.DrainNodeIfNeeded(wlCluster)
+		Expect(err).NotTo(HaveOccurred())
+
+		got := &v1alpha1.KubevirtMachine{}
+		Expect(mgmtClient.Get(gocontext.Background(), client.ObjectKeyFromObject(kvMachine), got)).To(Succeed())
+		Expect(got.Annotations).To(HaveKey(v1alpha1.NodeCordonedByCapk))
+	})
+
+	It("should drain the guest node and delete the VMI", func() {
+		externalMachine, err := splitTestMachine(machineContext, infraNamespace, infraClient, mgmtClient)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = externalMachine.DrainNodeIfNeeded(wlCluster)
+		Expect(err).NotTo(HaveOccurred())
+
+		node, err := guestNodeClient.CoreV1().Nodes().Get(gocontext.Background(), kubevirtMachineName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(node.Spec.Unschedulable).To(BeTrue())
+
+		remaining := &kubevirtv1.VirtualMachineInstance{}
+		err = infraClient.Get(gocontext.Background(), client.ObjectKeyFromObject(vmi), remaining)
+		Expect(err).To(HaveOccurred())
+	})
+
+})
+
+func splitTestMachine(ctx *context.MachineContext, infraNamespace string, infraClient, mgmtClient client.Client) (*Machine, error) {
+	machine, err := NewMachine(ctx, infraClient, mgmtClient, infraNamespace, &ssh.ClusterNodeSshKeys{PublicKey: []byte(sshKey)})
+	if err != nil {
+		return nil, err
+	}
+
+	machine.getCommandExecutor = func(string, *ssh.ClusterNodeSshKeys) ssh.VMCommandExecutor {
+		return FakeVMCommandExecutor{true}
+	}
+
+	return machine, nil
 }

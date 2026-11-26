@@ -45,6 +45,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-kubevirt/api/v1alpha1"
+	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/annotationfilter"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/capiv1beta1"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-kubevirt/pkg/infracluster"
@@ -56,9 +57,10 @@ import (
 // KubevirtMachineReconciler reconciles a KubevirtMachine object.
 type KubevirtMachineReconciler struct {
 	client.Client
-	InfraCluster    infracluster.InfraCluster
-	WorkloadCluster workloadcluster.WorkloadCluster
-	MachineFactory  kubevirt.MachineFactory
+	InfraCluster        infracluster.InfraCluster
+	WorkloadCluster     workloadcluster.WorkloadCluster
+	MachineFactory      kubevirt.MachineFactory
+	ExcludedAnnotations annotationfilter.Filter
 }
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=kubevirtmachines,verbs=get;list;watch;create;update;patch;delete
@@ -82,6 +84,10 @@ func (r *KubevirtMachineReconciler) Reconcile(goctx gocontext.Context, req ctrl.
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+	if r.ExcludedAnnotations.Excludes(kubevirtMachine) {
+		log.Info("Skipping KubevirtMachine with excluded annotation")
+		return ctrl.Result{}, nil
 	}
 
 	// Fetch the Machine.
@@ -176,7 +182,7 @@ func (r *KubevirtMachineReconciler) Reconcile(goctx gocontext.Context, req ctrl.
 			Type:    infrav1.VMProvisionedCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  infrav1.WaitingForClusterInfrastructureReason,
-			Message: "",
+			Message: "Waiting for the cluster infrastructure to become ready",
 		})
 		return ctrl.Result{}, nil
 	}
@@ -203,7 +209,7 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 				Type:    infrav1.VMProvisionedCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  infrav1.WaitingForControlPlaneAvailableReason,
-				Message: "",
+				Message: "Waiting for the control plane to become available",
 			})
 			return ctrl.Result{}, nil
 		}
@@ -213,7 +219,7 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 			Type:    infrav1.VMProvisionedCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  infrav1.WaitingForBootstrapDataReason,
-			Message: "",
+			Message: "Waiting for bootstrap data to become available",
 		})
 		return ctrl.Result{}, nil
 	}
@@ -260,15 +266,16 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 
 	if err := r.reconcileKubevirtBootstrapSecret(ctx, infraClusterClient, vmNamespace, clusterNodeSshKeys); err != nil {
 		conditions.Set(ctx.KubevirtMachine, metav1.Condition{
-			Type:   infrav1.VMProvisionedCondition,
-			Status: metav1.ConditionFalse,
-			Reason: infrav1.WaitingForBootstrapDataReason,
+			Type:    infrav1.VMProvisionedCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  infrav1.WaitingForBootstrapDataReason,
+			Message: fmt.Sprintf("Failed to fetch bootstrap data: %v", err),
 		})
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, errors.Wrap(err, "failed to fetch kubevirt bootstrap secret")
 	}
 
 	// Create a helper for managing the KubeVirt VM hosting the machine.
-	externalMachine, err := r.MachineFactory.NewMachine(ctx, infraClusterClient, vmNamespace, clusterNodeSshKeys)
+	externalMachine, err := r.MachineFactory.NewMachine(ctx, infraClusterClient, r.Client, vmNamespace, clusterNodeSshKeys)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to create helper for managing the externalMachine")
 	}
@@ -305,9 +312,10 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 	// Checks to see if a VM's active VMI is ready or not
 	if externalMachine.IsReady() {
 		conditions.Set(ctx.KubevirtMachine, metav1.Condition{
-			Type:   infrav1.VMProvisionedCondition,
-			Status: metav1.ConditionTrue,
-			Reason: "VMProvisioned",
+			Type:    infrav1.VMProvisionedCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  "VMProvisioned",
+			Message: "Virtual machine is provisioned and running",
 		})
 	} else {
 		reason, message := externalMachine.GetVMNotReadyReason()
@@ -363,9 +371,10 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 			}
 			conditions.Set(ctx.KubevirtMachine, metav1.Condition{
-				Type:   infrav1.BootstrapExecSucceededCondition,
-				Status: metav1.ConditionTrue,
-				Reason: "BootstrapExecSucceeded",
+				Type:    infrav1.BootstrapExecSucceededCondition,
+				Status:  metav1.ConditionTrue,
+				Reason:  "BootstrapExecSucceeded",
+				Message: "Virtual machine bootstrap succeeded",
 			})
 			ctx.Logger.Info("Underlying VM has bootstrapped.")
 		}
@@ -373,9 +382,10 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 		// VM doesn't support bootstrap checking (e.g. RHCOS without CAPK SSH keys).
 		// Mark bootstrap as succeeded so it doesn't block the Ready condition.
 		conditions.Set(ctx.KubevirtMachine, metav1.Condition{
-			Type:   infrav1.BootstrapExecSucceededCondition,
-			Status: metav1.ConditionTrue,
-			Reason: "BootstrapCheckingNotSupported",
+			Type:    infrav1.BootstrapExecSucceededCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  "BootstrapCheckingNotSupported",
+			Message: "Bootstrap checking is not supported; treating bootstrap as succeeded",
 		})
 	}
 
@@ -440,9 +450,10 @@ func (r *KubevirtMachineReconciler) reconcileNormal(ctx *context.MachineContext)
 	}
 	if liveMigratable {
 		conditions.Set(ctx.KubevirtMachine, metav1.Condition{
-			Type:   infrav1.VMLiveMigratableCondition,
-			Status: metav1.ConditionTrue,
-			Reason: "VMLiveMigratable",
+			Type:    infrav1.VMLiveMigratableCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  "VMLiveMigratable",
+			Message: "Virtual machine is live migratable",
 		})
 	} else {
 		conditions.Set(ctx.KubevirtMachine, metav1.Condition{
@@ -544,7 +555,7 @@ func (r *KubevirtMachineReconciler) reconcileDelete(ctx *context.MachineContext)
 	}
 
 	ctx.Logger.Info("Deleting VM...")
-	externalMachine, err := kubevirt.NewMachine(ctx, infraClusterClient, vmNamespace, nil)
+	externalMachine, err := kubevirt.NewMachine(ctx, infraClusterClient, r.Client, vmNamespace, nil)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, errors.Wrap(err, "failed to create helper for externalMachine access")
 	}
@@ -561,9 +572,10 @@ func (r *KubevirtMachineReconciler) reconcileDelete(ctx *context.MachineContext)
 	// Set the VMProvisionedCondition reporting delete is started, and attempt to issue a patch in
 	// order to make this visible to the users.
 	conditions.Set(ctx.KubevirtMachine, metav1.Condition{
-		Type:   infrav1.VMProvisionedCondition,
-		Status: metav1.ConditionFalse,
-		Reason: clusterv1.DeletingReason,
+		Type:    infrav1.VMProvisionedCondition,
+		Status:  metav1.ConditionFalse,
+		Reason:  clusterv1.DeletingReason,
+		Message: "KubevirtMachine deletion has started",
 	})
 	if err := ctx.PatchKubevirtMachine(patchHelper); err != nil {
 		if err = utilerrors.FilterOut(err, apierrors.IsNotFound); err != nil {
@@ -581,7 +593,7 @@ func (r *KubevirtMachineReconciler) SetupWithManager(goctx gocontext.Context, mg
 		return err
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	controllerBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&infrav1.KubevirtMachine{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPaused(r.Scheme(), ctrl.LoggerFrom(goctx))).
@@ -597,8 +609,13 @@ func (r *KubevirtMachineReconciler) SetupWithManager(goctx gocontext.Context, mg
 			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(clusterToKubevirtMachines),
 			builder.WithPredicates(predicates.ClusterPausedTransitionsOrInfrastructureProvisioned(r.Scheme(), ctrl.LoggerFrom(goctx))),
-		).
-		Complete(r)
+		)
+
+	if !r.ExcludedAnnotations.IsEmpty() {
+		controllerBuilder = controllerBuilder.WithEventFilter(r.ExcludedAnnotations.Predicate())
+	}
+
+	return controllerBuilder.Complete(r)
 }
 
 // KubevirtClusterToKubevirtMachines is a handler.ToRequestsFunc to be used to enqueue
